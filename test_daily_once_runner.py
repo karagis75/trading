@@ -95,6 +95,17 @@ class JobSpecTests(unittest.TestCase):
         job = runner.JobSpec.from_dict({"name": "x", "script": "x.py"})
         self.assertFalse(job.skip_if_empty_input)
 
+    def test_expanded_args_use_iso_date_folder(self) -> None:
+        job = runner.JobSpec(
+            "scan",
+            "scan.py",
+            args=("--output", r"outputs\{date}\scan.xlsx"),
+        )
+        self.assertEqual(
+            job.expanded_args(date(2026, 8, 27)),
+            ("--output", r"outputs\2026-08-27\scan.xlsx"),
+        )
+
 
 class DailyOnceRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -225,6 +236,13 @@ class DailyOnceRunnerTests(unittest.TestCase):
         report = daily.run()
         self.assertEqual(report.status, runner.STATUS_SUCCESS)
 
+    def test_date_output_directory_is_created_before_job_runs(self) -> None:
+        output_path = "outputs/{date}/scan.txt"
+        jobs = [runner.JobSpec("scan", "scan.py", args=("--output", output_path))]
+        daily = self._make_runner(jobs)
+        daily._prepare_output_paths(jobs[0].expanded_args(self.today))
+        self.assertTrue((self.root / "outputs" / "2026-08-27").is_dir())
+
     def test_skip_if_empty_input_skips_job_without_running_script(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -350,17 +368,21 @@ class JobsConfigAndCliTests(unittest.TestCase):
             list(merge_job.args),
             [
                 "--sources",
-                "Bullish_Bias_Analysis.xlsx",
-                "Bearish_Momentum_Analysis.xlsx",
-                "Strangle_Candidate_Analysis.xlsx",
+                "outputs/{date}/Bullish_Bias_Analysis.xlsx",
+                "outputs/{date}/Bearish_Momentum_Analysis.xlsx",
+                "outputs/{date}/Strangle_Candidate_Analysis.xlsx",
                 "--output",
-                "Option_Scan_Candidates.csv",
+                "outputs/{date}/Option_Scan_Candidates.csv",
             ],
         )
 
         option_job = jobs["combined-option-v8"]
         self.assertTrue(option_job.skip_if_empty_input)
-        self.assertEqual(option_job.input_path, "Option_Scan_Candidates.csv")
+        self.assertEqual(option_job.input_path, "outputs/{date}/Option_Scan_Candidates.csv")
+        self.assertEqual(
+            option_job.expanded_args(date(2026, 8, 27))[1],
+            "outputs/2026-08-27/Option_Scan_Candidates.csv",
+        )
         for flag in ("--browser-impersonation", "--request-delay", "1.5", "--max-retries", "6"):
             self.assertIn(flag, option_job.args)
 

@@ -10,7 +10,7 @@
         "--input",
         "ind_nifty500list.csv",
         "--output",
-        "Bullish_Bias_Analysis.xlsx"
+        "outputs/{date}/Bullish_Bias_Analysis.xlsx"
       ]
     },
     {
@@ -21,7 +21,7 @@
         "--input",
         "ind_nifty500list.csv",
         "--output",
-        "Bearish_Momentum_Analysis.xlsx"
+        "outputs/{date}/Bearish_Momentum_Analysis.xlsx"
       ]
     },
     {
@@ -32,7 +32,7 @@
         "--input",
         "ind_nifty500list.csv",
         "--output",
-        "nifty500_xy_matrix_signals.csv"
+        "outputs/{date}/nifty500_xy_matrix_signals.csv"
       ]
     },
     {
@@ -43,7 +43,7 @@
         "--input",
         "ind_nifty500list.csv",
         "--output",
-        "Strangle_Candidate_Analysis.xlsx"
+        "outputs/{date}/Strangle_Candidate_Analysis.xlsx"
       ]
     },
     {
@@ -52,11 +52,11 @@
       "script": "merge_ticker_candidates.py",
       "args": [
         "--sources",
-        "Bullish_Bias_Analysis.xlsx",
-        "Bearish_Momentum_Analysis.xlsx",
-        "Strangle_Candidate_Analysis.xlsx",
+        "outputs/{date}/Bullish_Bias_Analysis.xlsx",
+        "outputs/{date}/Bearish_Momentum_Analysis.xlsx",
+        "outputs/{date}/Strangle_Candidate_Analysis.xlsx",
         "--output",
-        "Option_Scan_Candidates.csv"
+        "outputs/{date}/Option_Scan_Candidates.csv"
       ]
     },
     {
@@ -67,9 +67,9 @@
       "script": "combinedoptionanalyzedv8.py",
       "args": [
         "--input",
-        "Option_Scan_Candidates.csv",
+        "outputs/{date}/Option_Scan_Candidates.csv",
         "--output",
-        "Combined_Option_Spread_Analysis.xlsx",
+        "outputs/{date}/Combined_Option_Spread_Analysis.xlsx",
         "--browser-impersonation",
         "--request-delay",
         "1.5",

@@ -132,6 +132,10 @@ class JobSpec:
                 return value
         return None
 
+    def expanded_args(self, run_date: date) -> tuple[str, ...]:
+        """Expand the supported date placeholder in command-line arguments."""
+        return tuple(argument.replace("{date}", run_date.isoformat()) for argument in self.args)
+
 
 @dataclass(frozen=True)
 class JobResult:
@@ -320,9 +324,19 @@ class DailyOnceRunner:
         except OSError:
             return False
 
+    def _prepare_output_paths(self, args: Sequence[str]) -> None:
+        """Create parent directories for scanner outputs before subprocesses run."""
+        for flag, value in zip(args, args[1:]):
+            if flag == "--output":
+                self._resolve_path(value).parent.mkdir(parents=True, exist_ok=True)
+
     def _execute_job(self, job: JobSpec) -> JobResult:
+        args = job.expanded_args(self.today_fn())
         if job.skip_if_empty_input:
-            input_path = job.input_path
+            input_path = next(
+                (value for flag, value in zip(args, args[1:]) if flag == "--input"),
+                None,
+            )
             if input_path is not None and not self._has_input_rows(input_path):
                 message = f"No candidates in '{input_path}'; skipping {job.name}."
                 LOGGER.info(message)
@@ -340,7 +354,8 @@ class DailyOnceRunner:
             LOGGER.error(message)
             return JobResult(name=job.name, returncode=1, duration_seconds=0.0, message=message)
 
-        command = [self.python_executable, str(script_path), *job.args]
+        self._prepare_output_paths(args)
+        command = [self.python_executable, str(script_path), *args]
         LOGGER.info("Starting job %s: %s", job.name, " ".join(command))
         started = self.now_fn()
         try:
