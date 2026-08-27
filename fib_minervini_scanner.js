@@ -9,6 +9,8 @@ const OUT_DIR   = path.join(__dirname, 'results');
 
 const PIVOT_LEFT  = parseInt(process.env.PIVOT_LEFT  || '5', 10);
 const PIVOT_RIGHT = parseInt(process.env.PIVOT_RIGHT || '5', 10);
+const MAX_DAYS_SINCE_W2 = parseInt(process.env.MAX_DAYS_SINCE_W2 || '120', 10);
+const MAX_DAYS_SINCE_W0 = parseInt(process.env.MAX_DAYS_SINCE_W0 || '180', 10);
 
 // — Technical Analysis Functions ———————————————————————————————————————————
 const r2 = v => Math.round(v * 100) / 100;
@@ -84,7 +86,7 @@ function processCustomScanner(symbol, rows) {
     // 2. Extract 52-Week Structural Extremes (250 trading days)
     const yearSlice = rows.slice(-250);
     const weeklyMin52 = yearSlice.reduce((min, r) => r.low < min ? r.low : min, Infinity);
-    const weeklyMax52 = yearSlice.reduce((max, r) => r.close > max ? r.close : max, -Infinity);
+    const weeklyMax52 = yearSlice.reduce((max, r) => r.high > max ? r.high : max, -Infinity);
 
     // 3. Evaluate Script Parameters Exactly
     const cond1 = (curClose >= curEma150) && (curClose >= curEma200);
@@ -102,7 +104,9 @@ function processCustomScanner(symbol, rows) {
     }
 
     // 4. Pinball Pattern Identification (Cross-Referencing the Verified Candidates)
-    const pivots = findPivots(rows);
+    const useRows = rows.length > 200 ? rows.slice(-200) : rows.slice();
+    const nUse = useRows.length;
+    const pivots = findPivots(useRows);
     let waveLabel = 'Unassigned Structural Setup';
     let extRatio = 0;
 
@@ -110,16 +114,25 @@ function processCustomScanner(symbol, rows) {
         const w2 = pivots[i], w1 = pivots[i-1], w0 = pivots[i-2];
         if (w2.type !== 'L' || w1.type !== 'H' || w0.type !== 'L') continue;
 
+        const daysSinceW2 = nUse - 1 - w2.idx;
+        if (daysSinceW2 > MAX_DAYS_SINCE_W2) continue;
+        const daysSinceW0 = nUse - 1 - w0.idx;
+        if (daysSinceW0 > MAX_DAYS_SINCE_W0) continue;
+
         const w1Amp = w1.price - w0.price;
         if (w1Amp <= 0 || w2.price <= w0.price) continue;
 
         const w2Retrace = (w1.price - w2.price) / w1Amp;
         if (w2Retrace < 0.236 || w2Retrace > 0.886) continue;
 
+        // Price still below W2 invalidates the pinball continuation
+        if (curClose < w2.price) continue;
+
         extRatio = (curClose - w2.price) / w1Amp;
         if (extRatio <= 0.618) waveLabel = 'Wave 1 of 3 (Pinball)';
         else if (extRatio <= 1.236) waveLabel = 'Wave 3 Pinball Breakout';
         else if (extRatio <= 2.000) waveLabel = 'Wave 5 Extended Target';
+        else continue;
         break;
     }
 
@@ -162,11 +175,13 @@ function main() {
             if (passed) {
                 matches.push(passed);
             }
-        } catch (err) {}
+        } catch (err) {
+            console.warn(`[SCANNER] Failed to process ${file}: ${err.message}`);
+        }
     }
 
     // Sort outputs descending based on volume intensity above its average standard baseline
-    matches.sort((a, b) => (b.Volume / b['Vol EMA20']) - (a.Volume / a['Vol EMA20']));
+    matches.sort((a, b) => (b.Volume / (b['Vol EMA20'] || 1)) - (a.Volume / (a['Vol EMA20'] || 1)));
 
     // Save Output Reports to CSV
     fs.mkdirSync(OUT_DIR, { recursive: true });

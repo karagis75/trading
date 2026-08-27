@@ -25,6 +25,9 @@ def calculate_indicators(df: pd.DataFrame, config: BullishScannerConfig) -> pd.D
     """Calculates EMAs, CCI, and ADX for given price data."""
     df = df.copy()
 
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
+
     # 1. Exponential Moving Averages (EMAs)
     df["EMA9"] = df["Close"].ewm(span=config.ema_fast, adjust=False).mean()
     df["EMA18"] = df["Close"].ewm(span=config.ema_medium, adjust=False).mean()
@@ -36,8 +39,8 @@ def calculate_indicators(df: pd.DataFrame, config: BullishScannerConfig) -> pd.D
     sma_tp = tp.rolling(window=config.cci_period).mean()
     mad = tp.rolling(window=config.cci_period).apply(
         lambda x: np.abs(x - x.mean()).mean(), raw=True
-    )
-    df["CCI"] = (tp - sma_tp) / (0.015 * mad)
+    ).replace(0, np.nan)
+    df["CCI"] = ((tp - sma_tp) / (0.015 * mad)).fillna(0)
 
     # 3. Average Directional Index (ADX)
     high_diff = df["High"].diff()
@@ -51,12 +54,12 @@ def calculate_indicators(df: pd.DataFrame, config: BullishScannerConfig) -> pd.D
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=config.adx_period).mean()
+    atr = tr.rolling(window=config.adx_period).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
 
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
-    df["ADX"] = dx.rolling(window=config.adx_period).mean()
+    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di).replace(0, np.nan))
+    df["ADX"] = dx.rolling(window=config.adx_period).mean().fillna(0)
 
     return df
 

@@ -99,7 +99,8 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open[i] == null || indicators.close[i] == null ||
+                indicators.high[i] == null || indicators.low[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -110,7 +111,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  adjClose[i] ?? indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -360,7 +361,9 @@ function detectEarlyWave1(symbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.05 || gainFromW0 > 1.0) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorBars  = useRows.slice(preW0Start, w0Idx);
+    if (priorBars.length === 0) return null;
+    const priorLow   = Math.min(...priorBars.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -451,9 +454,16 @@ async function main() {
     }
 
     // 4. Categorise and sort
-    const wave1 = allResults.filter(r => r['Wave Position'].includes('Wave 1'));
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5') || r['Wave Position'].includes('Super Extended'));
+    const isWave1 = pos => {
+        const p = String(pos || '');
+        return p === 'Wave 1' || p.startsWith('Wave 1 ') || p.startsWith('Early Wave 1');
+    };
+    const wave1 = allResults.filter(r => isWave1(r['Wave Position']));
+    const wave3 = allResults.filter(r => String(r['Wave Position']).startsWith('Wave 3'));
+    const wave5 = allResults.filter(r => {
+        const pos = String(r['Wave Position']);
+        return pos.startsWith('Wave 5') || pos.includes('Super Extended');
+    });
 
     const byConfidence = (a, b) => b.Confidence - a.Confidence || a.Symbol.localeCompare(b.Symbol);
     wave1.sort(byConfidence);

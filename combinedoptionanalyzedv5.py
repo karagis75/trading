@@ -127,23 +127,26 @@ def effective_iv(context: "MarketContext", india_vix: float) -> float:
 def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [col[0] for col in df.columns]
+
     # EMAs
     df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
     df["EMA18"] = df["Close"].ewm(span=18, adjust=False).mean()
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
-    # CCI (14 & 20)
+    # Robust CCI (14 & 20) — zero MAD would otherwise produce NaN and silently fail filters
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma_tp14 = tp.rolling(window=14).mean()
-    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    df["CCI14"] = (tp - sma_tp14) / (0.015 * mad14)
+    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
+    df["CCI14"] = ((tp - sma_tp14) / (0.015 * mad14)).fillna(0)
 
     sma_tp20 = tp.rolling(window=20).mean()
-    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    df["CCI20"] = (tp - sma_tp20) / (0.015 * mad20)
+    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
+    df["CCI20"] = ((tp - sma_tp20) / (0.015 * mad20)).fillna(0)
 
-    # ADX (14)
+    # Robust ADX (14)
     high_diff = df["High"].diff()
     low_diff = -df["Low"].diff()
     pos_dm = np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0.0)
@@ -154,11 +157,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=14).mean()
+    atr = tr.rolling(window=14).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=14).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=14).mean() / atr)
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
-    df["ADX"] = dx.rolling(window=14).mean()
+    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di).replace(0, np.nan))
+    df["ADX"] = dx.rolling(window=14).mean().fillna(0)
 
     # Fibonacci S1
     prev_high = df["High"].shift(1)
@@ -1160,7 +1163,8 @@ def analyze_symbol(
     BULLISH trend → Bull Call Spread (buy) + Bull Put Credit Spread (sell)
     BEARISH trend → Bear Put Spread (buy)  + Bear Call Credit Spread (sell)
     SIDEWAYS trend → Long Strangle (buy vol cheap) + Short Straddle (sell vol rich) + Iron Condor (sell bounded)
-    NEUTRAL / UNKNOWN trend → all of the above evaluated; PCR used as tiebreaker
+    NEUTRAL trend → non-directional selling only (short straddle / iron condor)
+    UNKNOWN trend → all families evaluated as a data-fallback; PCR used as tiebreaker
 
     Previously the two analysis functions (analyze_stock_spreads /
     analyze_option_selling_strategies) both routed by PCR alone. Trend was
@@ -1184,7 +1188,7 @@ def analyze_symbol(
     candidates: list[dict[str, Any]] = []
 
     # ── BULLISH ──────────────────────────────────────────────────────────────
-    if trend in ("bullish", "neutral", "unknown"):
+    if trend in ("bullish", "unknown"):
         if strategy_mode in ("buying", "both"):
             # Bull Call Spread: buy lower ATM call, sell higher OTM call
             bull_calls = sorted(calls, key=lambda o: float(o["strikePrice"]))
@@ -1195,7 +1199,7 @@ def analyze_symbol(
             candidates.extend(_build_put_credit_spreads(sym, context, config, india_vix, iv, puts))
 
     # ── BEARISH ──────────────────────────────────────────────────────────────
-    if trend in ("bearish", "neutral", "unknown"):
+    if trend in ("bearish", "unknown"):
         if strategy_mode in ("buying", "both"):
             # Bear Put Spread: buy higher ATM put, sell lower OTM put
             bear_puts = sorted(puts, key=lambda o: float(o["strikePrice"]), reverse=True)
@@ -1212,8 +1216,8 @@ def analyze_symbol(
             atm_call = min(calls, key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
             atm_put  = min(puts,  key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
 
-            if strategy_mode in ("buying", "both"):
-                # Long Strangle: buy OTM call + OTM put
+            if strategy_mode in ("buying", "both") and trend == "sideways":
+                # Long Strangle: buy OTM call + OTM put (only when compression confirmed)
                 otm_calls = [o for o in calls if float(o["strikePrice"]) > context.underlying_price]
                 otm_puts  = [o for o in puts  if float(o["strikePrice"]) < context.underlying_price]
                 strangle_pool = []

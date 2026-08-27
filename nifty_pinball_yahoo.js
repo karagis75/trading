@@ -109,7 +109,7 @@ async function fetchIndexHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  adjClose[i] ?? indicators.close[i], 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -226,7 +226,7 @@ function analyzeFibPinball(symbol, rows) {
 
         if (curPrice < w2c.price) {
             // Drop validation
-        } else if (curPrice <= w1c.high) {
+        } else if (curPrice <= w1c.price) {
             if (daysSinceW2 <= 30 && curPrice > w2c.price) {
                 waveLabel       = 'Early Wave 1 of 3';
                 waveConfidence  = 55;
@@ -334,7 +334,9 @@ function detectEarlyWave1(cleanSymbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.01 || gainFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorBars  = useRows.slice(preW0Start, w0Idx);
+    if (priorBars.length === 0) return null;
+    const priorLow   = Math.min(...priorBars.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -418,9 +420,16 @@ async function main() {
     
     console.log('\nData pipeline parsing execution complete.');
 
-    const wave1 = allResults.filter(r => r['Wave Position'].includes('Wave 1'));
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5') || r['Wave Position'].includes('Super Extended'));
+    const isWave1 = pos => {
+        const p = String(pos || '');
+        return p === 'Wave 1' || p.startsWith('Wave 1 ') || p.startsWith('Early Wave 1');
+    };
+    const wave1 = allResults.filter(r => isWave1(r['Wave Position']));
+    const wave3 = allResults.filter(r => String(r['Wave Position']).startsWith('Wave 3'));
+    const wave5 = allResults.filter(r => {
+        const pos = String(r['Wave Position']);
+        return pos.startsWith('Wave 5') || pos.includes('Super Extended');
+    });
 
     allResults.sort((a, b) => {
         const order = { 

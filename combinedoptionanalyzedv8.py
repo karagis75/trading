@@ -864,7 +864,11 @@ def build_short_iron_butterfly_opportunity(
     otm_call: dict[str, Any], otm_put: dict[str, Any],
     max_open_interest: int, expiry: str, iv_decimal: float
 ) -> dict[str, Any] | None:
-    atm_strike = float(atm_call["strikePrice"])
+    call_atm = float(atm_call["strikePrice"])
+    put_atm = float(atm_put["strikePrice"])
+    if call_atm != put_atm:
+        return None
+    atm_strike = call_atm
     otm_call_strike = float(otm_call["strikePrice"])
     otm_put_strike = float(otm_put["strikePrice"])
 

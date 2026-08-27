@@ -520,6 +520,13 @@ def pcr_allows_strategy(strategy: str, bias: str) -> bool:
     return False
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def add_validation_fields(
     opportunity: dict[str, Any], context: MarketContext, config: ScannerConfig
 ) -> dict[str, Any] | None:
@@ -532,11 +539,24 @@ def add_validation_fields(
         return None  # Skip rest of heavy calculations if PCR fails in enforced mode
 
     # 2. Additional Checks
-    margin_per_unit = float(opportunity["Max Loss"])
+    raw_max_loss = opportunity.get("Max Loss")
+    if isinstance(raw_max_loss, str) and raw_max_loss.strip().lower() == "unlimited":
+        margin_per_unit = round(context.underlying_price * 0.20, 2)
+    else:
+        margin_per_unit = (
+            _safe_float(raw_max_loss)
+            or _safe_float(opportunity.get("Net Debit"))
+            or _safe_float(opportunity.get("Credit"))
+            or 0.0
+        )
     estimated_margin = round(margin_per_unit * config.lot_size, 2)
+    spread_width = opportunity.get("Spread Width") or 0
     liquidity_pass = (
         float(opportunity["Avg OI"]) >= config.min_open_interest
-        and float(opportunity["Bid-Ask Spread"]) <= float(opportunity["Spread Width"]) * config.max_bid_ask_spread_pct
+        and (
+            float(spread_width) <= 0
+            or float(opportunity["Bid-Ask Spread"]) <= float(spread_width) * config.max_bid_ask_spread_pct
+        )
     )
     trend_pass = trend_allows_strategy(strategy, context.trend)
     event_pass = context.event_risk not in ("yes", "true", "high", "blocked", "avoid")

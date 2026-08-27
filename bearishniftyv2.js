@@ -107,7 +107,7 @@ async function fetchIndexHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  adjClose[i] ?? indicators.close[i], 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -332,7 +332,9 @@ function detectEarlyBearishWave1(cleanSymbol, rows, useRows, curPrice, curDate) 
     if (lossFromW0 < 0.01 || lossFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorHigh   = Math.max(...useRows.slice(preW0Start, w0Idx).map(r => r.high));
+    const priorBars  = useRows.slice(preW0Start, w0Idx);
+    if (priorBars.length === 0) return null;
+    const priorHigh   = Math.max(...priorBars.map(r => r.high));
     if (w0High <= priorHigh) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -415,9 +417,16 @@ async function main() {
     
     console.log('\nData pipeline breakdown parsing complete.');
 
-    const wave1 = allResults.filter(r => r['Wave Position'].includes('Wave 1'));
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5') || r['Wave Position'].includes('Super Extended'));
+    const isWave1 = pos => {
+        const p = String(pos || '');
+        return p === 'Wave 1' || p.startsWith('Wave 1 ') || p.startsWith('Early Wave 1');
+    };
+    const wave1 = allResults.filter(r => isWave1(r['Wave Position']));
+    const wave3 = allResults.filter(r => String(r['Wave Position']).startsWith('Wave 3'));
+    const wave5 = allResults.filter(r => {
+        const pos = String(r['Wave Position']);
+        return pos.startsWith('Wave 5') || pos.includes('Super Extended');
+    });
 
     allResults.sort((a, b) => {
         const order = { 

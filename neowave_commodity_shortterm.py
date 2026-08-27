@@ -140,7 +140,8 @@ def latest_impulse(pivots: list[dict], bearish: bool) -> tuple[dict, dict] | Non
         # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period
         macro_low = min(low_pivots, key=lambda x: x["price"])
         macro_high = max(high_pivots, key=lambda x: x["price"])
-        return macro_low, macro_high
+        if macro_low["index"] < macro_high["index"]:
+            return macro_low, macro_high
         
     return None
 
@@ -210,7 +211,9 @@ def plot_chart(frame: pd.DataFrame, symbol: str, pivot_width: int, is_bearish: b
         
         # Lookback validation timeline calculation anchor strategy
         short_term_lookback = min(60, len(frame) - anchors["start"]["index"])
-        visualization_start_date = frame.index[-short_term_lookback]
+        visualization_start_date = (
+            frame.index[-1] if short_term_lookback <= 0 else frame.index[-short_term_lookback]
+        )
         
         ret_color = "#f472b6" if is_bearish else "#60a5fa"      
         target_color = "#ef4444" if is_bearish else "#22c55e"   

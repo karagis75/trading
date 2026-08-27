@@ -98,7 +98,8 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open[i] == null || indicators.close[i] == null ||
+                indicators.high[i] == null || indicators.low[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -109,7 +110,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  adjClose[i] ?? indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -378,8 +379,8 @@ async function main() {
 
     allResults.sort((a, b) => b.Confidence - a.Confidence);
 
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5'));
+    const wave3 = allResults.filter(r => String(r['Wave Position']).startsWith('Wave 3'));
+    const wave5 = allResults.filter(r => String(r['Wave Position']).startsWith('Wave 5'));
 
     const csvHeaders = [
         'Symbol', 'Last Date', 'Wave Position', 'Confidence', 'Current Price',
