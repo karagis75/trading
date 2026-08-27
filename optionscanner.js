@@ -117,6 +117,7 @@ function optionQuote(contract) {
   const ask = num(contract?.askPrice ?? contract?.askprice);
   const oi = num(contract?.openInterest);
   if (!contract || oi <= 0) return null;
+  if (bid > 0 && ask > 0 && ask < bid) return null;
   if (bid > 0 && ask > 0 && ask >= bid) {
     return { bid, ask, oi, relativeSpread: (ask - bid) / ((ask + bid) / 2), priceSource: 'live bid/ask' };
   }

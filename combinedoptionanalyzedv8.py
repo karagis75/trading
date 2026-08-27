@@ -503,9 +503,11 @@ def bid_ask_spread_pct(option: dict[str, Any]) -> float:
 
 
 def option_is_tradeable(option: dict[str, Any], config: ScannerConfig) -> bool:
+    bid = bid_price(option)
+    ask = ask_price(option)
     return (
-        bid_price(option) >= config.min_bid
-        and ask_price(option) > 0
+        bid >= config.min_bid
+        and ask >= bid
         and _safe_int(option.get("openInterest")) >= config.min_open_interest
         and traded_volume(option) >= config.min_volume
         and bid_ask_spread_pct(option) <= config.max_bid_ask_spread_pct

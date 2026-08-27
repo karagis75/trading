@@ -88,6 +88,16 @@ class TradingScannerRegressionTests(unittest.TestCase):
         self.assertEqual(context.max_open_interest, 10)
         self.assertEqual(context.atm_iv, 0.21)
 
+    def test_crossed_quotes_are_not_treated_as_tradeable(self):
+        option = {
+            "bidprice": "12.0",
+            "askPrice": "10.0",
+            "openInterest": "1000",
+            "totalTradedVolume": "100",
+        }
+
+        self.assertFalse(scanner.option_is_tradeable(option, scanner.ScannerConfig()))
+
 
 if __name__ == "__main__":
     unittest.main()

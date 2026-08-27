@@ -99,6 +99,7 @@ function quote(contract) {
   const bid = num(contract?.bidprice ?? contract?.bidPrice);
   const ask = num(contract?.askPrice ?? contract?.askprice);
   if (!contract || oi <= 0) return null;
+  if (bid > 0 && ask > 0 && ask < bid) return null;
   if (bid > 0 && ask >= bid) return { bid, ask, oi, source: 'live bid/ask' };
   const ltp = num(contract.lastPrice ?? contract.ltp);
   return ltp > 0 ? { bid: ltp, ask: ltp, oi, source: 'LTP only — verify live quote' } : null;
