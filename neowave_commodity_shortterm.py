@@ -88,7 +88,10 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
         (frame["High"] - previous_close).abs(),
         (frame["Low"] - previous_close).abs(),
     ], axis=1).max(axis=1)
-    atr_percent = float((true_range.rolling(14).mean() / close).iloc[-1] * 100)
+    atr_ratio = (true_range.rolling(14).mean() / close).iloc[-1]
+    if not np.isfinite(atr_ratio):
+        return 8
+    atr_percent = float(atr_ratio * 100)
     history_component = len(frame) / 180
     volatility_component = atr_percent * 0.8
     return int(np.clip(round(4 + history_component + volatility_component), 5, 18))
@@ -140,7 +143,8 @@ def latest_impulse(pivots: list[dict], bearish: bool) -> tuple[dict, dict] | Non
         # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period
         macro_low = min(low_pivots, key=lambda x: x["price"])
         macro_high = max(high_pivots, key=lambda x: x["price"])
-        return macro_low, macro_high
+        if macro_low["index"] < macro_high["index"]:
+            return macro_low, macro_high
         
     return None
 

@@ -79,7 +79,10 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
         (frame["High"] - previous_close).abs(),
         (frame["Low"] - previous_close).abs(),
     ], axis=1).max(axis=1)
-    atr_percent = float((true_range.rolling(14).mean() / close).iloc[-1] * 100)
+    atr_ratio = (true_range.rolling(14).mean() / close).iloc[-1]
+    if not np.isfinite(atr_ratio):
+        return 8
+    atr_percent = float(atr_ratio * 100)
     history_component = len(frame) / 180  # about 7 for five years of daily bars
     volatility_component = atr_percent * 0.8
     return int(np.clip(round(4 + history_component + volatility_component), 5, 18))
