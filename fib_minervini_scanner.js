@@ -9,6 +9,7 @@ const OUT_DIR   = path.join(__dirname, 'results');
 
 const PIVOT_LEFT  = parseInt(process.env.PIVOT_LEFT  || '5', 10);
 const PIVOT_RIGHT = parseInt(process.env.PIVOT_RIGHT || '5', 10);
+const MAX_DAYS_SINCE_W2 = parseInt(process.env.MAX_DAYS_SINCE_W2 || '120', 10);
 
 // — Technical Analysis Functions ———————————————————————————————————————————
 const r2 = v => Math.round(v * 100) / 100;
@@ -84,7 +85,7 @@ function processCustomScanner(symbol, rows) {
     // 2. Extract 52-Week Structural Extremes (250 trading days)
     const yearSlice = rows.slice(-250);
     const weeklyMin52 = yearSlice.reduce((min, r) => r.low < min ? r.low : min, Infinity);
-    const weeklyMax52 = yearSlice.reduce((max, r) => r.close > max ? r.close : max, -Infinity);
+    const weeklyMax52 = yearSlice.reduce((max, r) => r.high > max ? r.high : max, -Infinity);
 
     // 3. Evaluate Script Parameters Exactly
     const cond1 = (curClose >= curEma150) && (curClose >= curEma200);
@@ -115,6 +116,10 @@ function processCustomScanner(symbol, rows) {
 
         const w2Retrace = (w1.price - w2.price) / w1Amp;
         if (w2Retrace < 0.236 || w2Retrace > 0.886) continue;
+        if (curClose < w2.price) continue;
+
+        const daysSinceW2 = n - 1 - w2.idx;
+        if (daysSinceW2 > MAX_DAYS_SINCE_W2) continue;
 
         extRatio = (curClose - w2.price) / w1Amp;
         if (extRatio <= 0.618) waveLabel = 'Wave 1 of 3 (Pinball)';
@@ -201,4 +206,8 @@ function main() {
     console.log(`Full matching spreadsheet written to: ${destinationPath}`);
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = { processCustomScanner, findPivots, calculateEMA };

@@ -37,8 +37,8 @@ function toYYYYMMDDStr(dateObj) {
 
 function downloadYahooData(symbol, period1, period2) {
     // Modified for US markets: Use native symbols directly without Indian market extensions (.NS)
-    const yahooSymbol = symbol.trim().toUpperCase();
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
+    const yahooSymbol = symbol.trim().toUpperCase().replace(/\./g, '-');
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
         const options = {
@@ -98,7 +98,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open?.[i] == null || indicators.close?.[i] == null || indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -330,7 +330,73 @@ function analyzeFibPinball(symbol, rows) {
         };
         break; 
     }
+
+    if (!best) {
+        best = detectEarlyWave1(symbol, rows, useRows, curPrice, curDate);
+    }
     return best;
+}
+
+function detectEarlyWave1(symbol, rows, useRows, curPrice, curDate) {
+    const n = useRows.length;
+    if (n < 20) return null;
+
+    let w0Idx = 0;
+    let w0Low = Infinity;
+    const lookStart = Math.max(0, n - MAX_DAYS_SINCE_W0);
+    for (let i = lookStart; i < n; i++) {
+        if (useRows[i].low < w0Low) { w0Low = useRows[i].low; w0Idx = i; }
+    }
+
+    const daysSinceW0 = n - 1 - w0Idx;
+    if (daysSinceW0 < 5) return null;
+    if (daysSinceW0 > MAX_DAYS_SINCE_W0) return null;
+
+    const gainFromW0 = (curPrice - w0Low) / w0Low;
+    if (gainFromW0 < 0.05 || gainFromW0 > 1.0) return null;
+
+    const preW0Start = Math.max(0, w0Idx - 20);
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (priorSlice.length === 0) return null;
+    const priorLow = Math.min(...priorSlice.map(r => r.low));
+    if (w0Low >= priorLow) return null;
+
+    const slice10 = useRows.slice(-10);
+    const sma10 = slice10.reduce((s, r) => s + r.close, 0) / slice10.length;
+    if (curPrice < sma10) return null;
+
+    const highAfterW0 = Math.max(...useRows.slice(w0Idx).map(r => r.high));
+    const w1Amplitude = highAfterW0 - w0Low;
+    if (w1Amplitude <= 0) return null;
+
+    const w0Date = useRows[w0Idx].date;
+
+    return {
+        Symbol:          symbol,
+        'Last Date':     curDate,
+        'Wave Position': 'Wave 1',
+        Confidence:      60,
+        Description:     `Early Wave 1: fresh low at ${r2(w0Low)} (${daysSinceW0} bars ago); price gained ${r2(gainFromW0 * 100)}% from W0; Wave 1 high so far: ${r2(highAfterW0)}`,
+        'W0 Low':        r2(w0Low),
+        'W0 Date':       w0Date,
+        'W1 High':       r2(highAfterW0),
+        'W1 Date':       curDate,
+        'W2 Low':        '',
+        'W2 Date':       '',
+        'W2 Retrace %':  '',
+        'W1 Amplitude':  r2(w1Amplitude),
+        'Current Price': r2(curPrice),
+        'Ext Ratio':     r2(gainFromW0),
+        '0.382 Ext':     r2(w0Low + 0.382 * w1Amplitude),
+        '0.618 Ext':     r2(w0Low + 0.618 * w1Amplitude),
+        '0.764 Ext':     r2(w0Low + 0.764 * w1Amplitude),
+        '1.000 Ext':     r2(w0Low + 1.000 * w1Amplitude),
+        '1.236 Ext':     r2(w0Low + 1.236 * w1Amplitude),
+        '1.382 Ext':     r2(w0Low + 1.382 * w1Amplitude),
+        '1.618 Ext':     r2(w0Low + 1.618 * w1Amplitude),
+        '1.764 Ext':     r2(w0Low + 1.764 * w1Amplitude),
+        '2.000 Ext':     r2(w0Low + 2.000 * w1Amplitude)
+    };
 }
 
 // — Main Automation Executor ———————————————————————————————————————————————
@@ -378,7 +444,10 @@ async function main() {
 
     allResults.sort((a, b) => b.Confidence - a.Confidence);
 
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
+    const wave3 = allResults.filter(r => {
+        const p = String(r['Wave Position']);
+        return p.includes('Wave 3') && !p.includes('Wave 1 of 3');
+    });
     const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5'));
 
     const csvHeaders = [
@@ -425,4 +494,8 @@ async function main() {
     }
 }
 
-main().catch(err => console.error('Critical Global Exception Triggered Error Pipeline Loop:', err));
+if (require.main === module) {
+    main().catch(err => console.error('Critical Global Exception Triggered Error Pipeline Loop:', err));
+}
+
+module.exports = { analyzeFibPinball, detectEarlyWave1 };
