@@ -93,7 +93,6 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -101,13 +100,14 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
             const d = new Date(timestamps[i] * 1000);
             
+            // Use raw OHLC throughout so pivots/fibs stay consistent (do not mix adjclose with unadjusted high/low).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol === '^NSEI' ? 'NIFTY50' : (symbol === '^NSEBANK' ? 'BANKNIFTY' : symbol),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }

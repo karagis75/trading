@@ -45,6 +45,26 @@ DEFAULT_SYMBOLS = (
 
 INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
+# Yahoo Finance identifiers for NSE index option underlyings (NIFTY.NS / BANKNIFTY.NS are invalid).
+INDEX_YAHOO_ALIASES = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "NIFTY_MID_SELECT.NS",
+}
+
+
+def yahoo_history_ticker(symbol: str) -> str:
+    """Map friendly NSE names / indices to Yahoo Finance history tickers."""
+    cleaned = symbol.strip().upper()
+    if cleaned in INDEX_YAHOO_ALIASES:
+        return INDEX_YAHOO_ALIASES[cleaned]
+    if "." in cleaned or cleaned.startswith("^"):
+        return cleaned
+    return f"{cleaned}.NS"
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -201,7 +221,7 @@ def detect_market_trend_detailed(
         diag["Fetch Error"] = "yfinance not installed"
         return "unknown", diag
 
-    formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
+    formatted_ticker = yahoo_history_ticker(symbol)
     diag["Ticker Used"] = formatted_ticker
     try:
         ticker = yf.Ticker(formatted_ticker)

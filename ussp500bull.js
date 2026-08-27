@@ -8,7 +8,7 @@ const https = require('https');
 
 const SYMBOLS_FILE = process.env.SYMBOLS_FILE 
     ? path.resolve(__dirname, process.env.SYMBOLS_FILE)
-    : path.join(__dirname, 'data', 'sp500.csv'); // Default modified for S&P 500
+    : path.join(__dirname, 'sp500.csv'); // Default modified for S&P 500
 
 // Cache directory for Yahoo Finance JSON files
 const CACHE_DIR = path.join(__dirname, 'data', 'yahoo_cache');
@@ -36,8 +36,8 @@ function toYYYYMMDDStr(dateObj) {
 // — Direct HTTPS Getter for Yahoo Finance ——————————————————————————————————
 
 function downloadYahooData(symbol, period1, period2) {
-    // Modified for US markets: Use native symbols directly without Indian market extensions (.NS)
-    const yahooSymbol = symbol.trim().toUpperCase();
+    // US markets: no .NS suffix. Yahoo class shares use hyphen (BRK-B), not dot (BRK.B).
+    const yahooSymbol = encodeURIComponent(symbol.trim().toUpperCase().replace(/\./g, '-'));
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
@@ -93,7 +93,6 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -103,13 +102,14 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
             const d = new Date(timestamps[i] * 1000);
             
             // Reconstruct row objects to perfectly match internal architecture
+            // Use raw OHLC throughout so pivots/fibs stay consistent (do not mix adjclose with unadjusted high/low).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol.toUpperCase(),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }

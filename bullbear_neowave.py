@@ -190,6 +190,8 @@ def plot_chart(frame: pd.DataFrame, symbol: str, pivot_width: int, is_bearish: b
                         bbox={"boxstyle": "round,pad=0.18", "fc": "#7c3aed", "ec": "none", "alpha": 0.9})
 
     fib = calculate_fib_levels(pivots, is_bearish)
+    mode_prefix = "Bear" if is_bearish else "Bull"
+
     if fib:
         anchors, retracements, targets = fib
         start_date = frame.index[anchors["start"]["index"]]
@@ -199,8 +201,6 @@ def plot_chart(frame: pd.DataFrame, symbol: str, pivot_width: int, is_bearish: b
         ret_color = "#f472b6" if is_bearish else "#60a5fa"      # Pinkish support/resistance vs blue
         target_color = "#ef4444" if is_bearish else "#22c55e"   # Red downside target vs green upside
         invalid_color = "#22c55e" if is_bearish else "#ef4444"  # Green upper invalidation vs red lower invalidation
-        
-        mode_prefix = "Bear" if is_bearish else "Bull"
         
         for ratio, price in retracements.items():
             ax.hlines(price, start_date, frame.index[-1], colors=ret_color, linestyles="--", lw=0.85, alpha=0.8)

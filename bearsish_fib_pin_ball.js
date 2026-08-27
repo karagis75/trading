@@ -9,7 +9,7 @@ const https = require('https');
 
 const SYMBOLS_FILE = process.env.SYMBOLS_FILE 
     ? path.resolve(__dirname, process.env.SYMBOLS_FILE)
-    : path.join(__dirname, 'data', 'nifty500.csv');
+    : path.join(__dirname, 'nifty500.csv');
 
 // Cache directory for Yahoo Finance JSON files
 const CACHE_DIR = path.join(__dirname, 'data', 'yahoo_cache');
@@ -37,7 +37,9 @@ function toYYYYMMDDStr(dateObj) {
 // — Direct HTTPS Getter for Yahoo Finance ——————————————————————————————————
 
 function downloadYahooData(symbol, period1, period2) {
-    const yahooSymbol = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
+    // encodeURIComponent is required for tickers containing '&' (e.g. M&M, M&MFIN).
+    const rawSymbol = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
+    const yahooSymbol = encodeURIComponent(rawSymbol);
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
@@ -91,7 +93,6 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -99,13 +100,14 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
             const d = new Date(timestamps[i] * 1000);
             
+            // Use raw OHLC throughout so pivots/fibs stay consistent (do not mix adjclose with unadjusted high/low).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol.toUpperCase().replace('.NS', ''),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }

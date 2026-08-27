@@ -138,9 +138,11 @@ def latest_impulse(pivots: list[dict], bearish: bool) -> tuple[dict, dict] | Non
             return macro_high, macro_low
     else:
         # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period
+        # Require chronological L -> H order (same guard as the bearish path).
         macro_low = min(low_pivots, key=lambda x: x["price"])
         macro_high = max(high_pivots, key=lambda x: x["price"])
-        return macro_low, macro_high
+        if macro_low["index"] < macro_high["index"]:
+            return macro_low, macro_high
         
     return None
 
