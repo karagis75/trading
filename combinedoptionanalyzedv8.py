@@ -1,4 +1,5 @@
 import argparse
+import io
 import logging
 import math
 from dataclasses import dataclass
@@ -29,19 +30,11 @@ INDICES_URL = "https://www.nseindia.com/api/allIndices"
 OPTION_CHAIN_CONTRACT_INFO_URL = "https://www.nseindia.com/api/option-chain-contract-info"
 OPTION_CHAIN_URL = "https://www.nseindia.com/api/option-chain-v3"
 
-DEFAULT_SYMBOLS = (
-    "BIOCON",
-    "ADANIPORTS",
-    "INFY",
-    "HDFCBANK",
-    "ICICIBANK",
-    "SBIN",
-    "AUBANK",
-    "BHARTIARTL",
-    "BHEL",
-    "HINDPETRO",
-    "IOC"
+DEFAULT_STOCK_LIST_NAME = "ind_nifty500list.csv"
+DEFAULT_STOCK_LIST_URL = (
+    "https://github.com/karagis75/trading/blob/main/ind_nifty500list.csv"
 )
+LOCAL_STOCK_LIST = Path(__file__).resolve().parent / DEFAULT_STOCK_LIST_NAME
 
 INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
@@ -64,6 +57,11 @@ HEADERS = {
     "Sec-Fetch-Mode": "navigate",
     "Sec-Fetch-Site": "none",
     "Upgrade-Insecure-Requests": "1",
+}
+
+STOCK_LIST_HTTP_HEADERS = {
+    "Accept": "*/*",
+    "User-Agent": HEADERS["User-Agent"],
 }
 
 # Fast O(1) strategy directional mapping for confluence verification
@@ -432,6 +430,135 @@ def fetch_option_chain(
 
 def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
     return data.get("records", {}).get("data") or []
+
+
+def to_raw_github_url(source: str) -> str:
+    """Convert github.com blob URLs into raw.githubusercontent.com download URLs."""
+    if "github.com/" not in source or "/blob/" not in source:
+        return source
+
+    after_host = source.split("github.com/", 1)[1]
+    parts = after_host.split("/")
+    if len(parts) < 5 or parts[2] != "blob":
+        return source
+
+    user, repo, _blob, ref = parts[:4]
+    path = "/".join(parts[4:])
+    return f"https://raw.githubusercontent.com/{user}/{repo}/{ref}/{path}"
+
+
+def resolve_input_source(source: str | Path | None = None) -> str:
+    """Resolve a local CSV path or GitHub URL for the stock universe."""
+    requested = str(source) if source is not None else DEFAULT_STOCK_LIST_NAME
+    if requested.startswith("http://") or requested.startswith("https://"):
+        return requested
+
+    path = Path(requested)
+    candidates = [path]
+    if not path.is_absolute():
+        script_dir = Path(__file__).resolve().parent
+        candidates.append(script_dir / path)
+        candidates.append(script_dir / path.name)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+
+    if Path(requested).name == DEFAULT_STOCK_LIST_NAME:
+        return DEFAULT_STOCK_LIST_URL
+
+    raise FileNotFoundError(
+        f"Input file not found: {requested}. "
+        f'Pass a CSV path with --input, for example --input "{DEFAULT_STOCK_LIST_NAME}".'
+    )
+
+
+def _clean_symbols(values: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        symbol = str(value).strip().upper()
+        if not symbol or symbol in {"NAN", "NONE", "TICKER", "SYMBOL"}:
+            continue
+        if symbol.endswith(".NS"):
+            symbol = symbol[:-3]
+        if not symbol or symbol in seen:
+            continue
+        seen.add(symbol)
+        cleaned.append(symbol)
+    return cleaned
+
+
+def _extract_symbols(frame: pd.DataFrame) -> list[str]:
+    normalized = {"".join(str(col).lower().split()): col for col in frame.columns}
+    column = normalized.get("ticker") or normalized.get("symbol")
+    if not column:
+        raise ValueError(
+            "Input file must contain a 'Ticker' or 'Symbol' column. "
+            f"Found columns: {list(frame.columns)}"
+        )
+    return _clean_symbols(frame[column].dropna().astype(str).tolist())
+
+
+def _frame_from_bytes(url: str, content: bytes) -> pd.DataFrame:
+    lower = url.lower().split("?", 1)[0]
+    buffer = io.BytesIO(content)
+    excel_suffixes = (".xlsx", ".xls", ".xlsm", ".ods")
+    if any(lower.endswith(suffix) for suffix in excel_suffixes):
+        return pd.read_excel(buffer)
+    try:
+        return pd.read_csv(buffer)
+    except Exception:
+        buffer.seek(0)
+        return pd.read_excel(buffer)
+
+
+def _read_stock_list_frame(source: str, session: Any | None = None) -> pd.DataFrame:
+    if source.startswith("http://") or source.startswith("https://"):
+        url = to_raw_github_url(source)
+        http = session or requests.Session()
+        response = http.get(url, headers=STOCK_LIST_HTTP_HEADERS, timeout=30)
+        response.raise_for_status()
+        return _frame_from_bytes(url, response.content)
+
+    path = Path(source)
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    if suffix in {".xlsx", ".xls", ".xlsm", ".ods"}:
+        return pd.read_excel(path)
+
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return pd.read_excel(path)
+
+
+def load_symbols_from_input(
+    source: str | Path | None = None,
+    session: Any | None = None,
+) -> list[str]:
+    """Load NSE symbols from ind_nifty500list.csv, another local file, or a GitHub URL."""
+    resolved = resolve_input_source(source)
+    symbols = _extract_symbols(_read_stock_list_frame(resolved, session))
+    if not symbols:
+        raise ValueError(f"Stock list is empty: {resolved}")
+    return symbols
+
+
+def resolve_scan_symbols(
+    symbols: list[str] | None,
+    input_path: str,
+    session: Any | None = None,
+) -> tuple[list[str], str]:
+    """Return scan symbols from --symbols, otherwise from --input."""
+    if symbols:
+        cleaned = _clean_symbols(symbols)
+        if not cleaned:
+            raise ValueError("No valid symbols were provided via --symbols.")
+        return cleaned, "command line"
+    loaded = load_symbols_from_input(input_path, session)
+    return loaded, str(input_path)
 
 
 def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
@@ -1360,7 +1487,20 @@ def write_results(results: list[dict[str, Any]], output_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Integrated Scanner: Technical Trend + NSE Option Chain Spread Analysis.")
-    parser.add_argument("--symbols", nargs="+", default=list(DEFAULT_SYMBOLS))
+    parser.add_argument(
+        "--input",
+        default=DEFAULT_STOCK_LIST_NAME,
+        help=(
+            "CSV or Excel file (or GitHub URL) with a Ticker/Symbol column. "
+            f"Defaults to {DEFAULT_STOCK_LIST_NAME}."
+        ),
+    )
+    parser.add_argument(
+        "--symbols",
+        nargs="+",
+        default=None,
+        help="Optional subset of NSE symbols. When omitted, symbols are loaded from --input.",
+    )
     parser.add_argument("--output", default="Combined_Option_Spread_Analysis.xlsx")
     parser.add_argument("--min-oi", type=int, default=100)
     parser.add_argument("--min-bid", type=float, default=0.05)
@@ -1402,6 +1542,13 @@ def main() -> None:
         enforce_validations=args.enforce_validations,
     )
 
+    try:
+        symbols, source_label = resolve_scan_symbols(args.symbols, args.input)
+    except Exception as exc:
+        raise SystemExit(f"Unable to load symbols: {exc}") from exc
+
+    print(f"Loaded {len(symbols)} {'symbol' if len(symbols) == 1 else 'symbols'} from {source_label}.")
+
     trend_map = load_symbol_map(args.trend_file, "Trend")
     event_map = load_symbol_map(args.event_file, "EventRisk")
     cookie_header = load_cookie_header(args.cookie_header, args.cookie_file)
@@ -1417,7 +1564,7 @@ def main() -> None:
     trend_diagnostics: list[dict[str, Any]] = []
 
     results: list[dict[str, Any]] = []
-    for symbol in args.symbols:
+    for symbol in symbols:
         print(f"Analyzing {symbol.upper()}...")
 
         if args.trend_debug:
