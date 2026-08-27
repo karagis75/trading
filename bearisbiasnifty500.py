@@ -35,7 +35,7 @@ def calculate_indicators(df: pd.DataFrame, config: BearishScannerConfig) -> pd.D
     sma_tp = tp.rolling(window=config.cci_period).mean()
     mad = tp.rolling(window=config.cci_period).apply(
         lambda x: np.abs(x - x.mean()).mean(), raw=True
-    )
+    ).replace(0, np.nan)
     df["CCI"] = (tp - sma_tp) / (0.015 * mad)
 
     # 3. Average Directional Index (ADX)
@@ -50,11 +50,12 @@ def calculate_indicators(df: pd.DataFrame, config: BearishScannerConfig) -> pd.D
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=config.adx_period).mean()
+    atr = tr.rolling(window=config.adx_period).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
 
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
     df["ADX"] = dx.rolling(window=config.adx_period).mean()
 
     # 4. Fibonacci Pivot Points (Calculated on previous day's High, Low, Close)

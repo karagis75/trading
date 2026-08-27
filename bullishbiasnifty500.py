@@ -36,7 +36,7 @@ def calculate_indicators(df: pd.DataFrame, config: BullishScannerConfig) -> pd.D
     sma_tp = tp.rolling(window=config.cci_period).mean()
     mad = tp.rolling(window=config.cci_period).apply(
         lambda x: np.abs(x - x.mean()).mean(), raw=True
-    )
+    ).replace(0, np.nan)
     df["CCI"] = (tp - sma_tp) / (0.015 * mad)
 
     # 3. Average Directional Index (ADX)
@@ -51,11 +51,12 @@ def calculate_indicators(df: pd.DataFrame, config: BullishScannerConfig) -> pd.D
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=config.adx_period).mean()
+    atr = tr.rolling(window=config.adx_period).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
 
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
     df["ADX"] = dx.rolling(window=config.adx_period).mean()
 
     return df
@@ -81,8 +82,8 @@ def evaluate_bullish_bias(symbol: str, df: pd.DataFrame, config: BullishScannerC
     ema200_sloping_up = curr["EMA200"] >= df.iloc[-5]["EMA200"]
     ema_aligned = price_above_emas and ema200_sloping_up
 
-    # Rule 2: CCI Momentum Trigger & Sustained Check
-    cci_trigger = (prev["CCI"] <= 100 and curr["CCI"] > 100) or (curr["CCI"] > 100)
+    # Rule 2: CCI momentum trigger — fresh cross above 100 (not merely already above)
+    cci_trigger = prev["CCI"] <= 100 and curr["CCI"] > 100
 
     # Rule 3: Bullish Candle Check
     body_size = abs(curr["Close"] - curr["Open"])
