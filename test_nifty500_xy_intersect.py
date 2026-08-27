@@ -76,6 +76,23 @@ class Nifty500IntersectTests(unittest.TestCase):
         self.assertIn("100BP Target: 101.0", result["X/Y Intersect Rule"])
         self.assertIn("DMA Stop: 101.0", result["X/Y Intersect Rule"])
 
+    def test_c_mar_signal_uses_slow_dma_as_trailing_exit(self) -> None:
+        frame = make_evaluation_frame()
+        frame.iloc[:, frame.columns.get_loc("ADX")] = 20.0
+        frame.iloc[-2, frame.columns.get_loc("8_DMA")] = 100.0
+        frame.iloc[-2, frame.columns.get_loc("18_DMA")] = 98.0
+        frame.iloc[-1, frame.columns.get_loc("8_DMA")] = 101.0
+        frame.iloc[-1, frame.columns.get_loc("18_DMA")] = 99.0
+        frame.iloc[-1, frame.columns.get_loc("Close")] = 100.5
+        frame.iloc[-1, frame.columns.get_loc("Low")] = 100.4
+
+        result = scanner.evaluate_intersect_signal("INFY.NS", frame)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["Triggered Entry (Y)"], "C_MAR (Retest)")
+        self.assertIn("DMA Stop: 99.0", result["X/Y Intersect Rule"])
+
     def test_screen_uses_real_indicators_and_skips_failed_downloads(self) -> None:
         history = make_history()
         # The latest eight closes produce an upward 8-DMA over the 18-DMA.
