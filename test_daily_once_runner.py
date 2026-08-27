@@ -83,6 +83,18 @@ class JobSpecTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.JobSpec.from_dict({"name": "x"})
 
+    def test_input_path_reads_value_after_input_flag(self) -> None:
+        job = runner.JobSpec("scan", "scan.py", args=("--input", "candidates.csv", "--output", "out.xlsx"))
+        self.assertEqual(job.input_path, "candidates.csv")
+
+    def test_input_path_is_none_without_input_flag(self) -> None:
+        job = runner.JobSpec("scan", "scan.py", args=("--symbols", "TCS"))
+        self.assertIsNone(job.input_path)
+
+    def test_skip_if_empty_input_defaults_to_false(self) -> None:
+        job = runner.JobSpec.from_dict({"name": "x", "script": "x.py"})
+        self.assertFalse(job.skip_if_empty_input)
+
 
 class DailyOnceRunnerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -213,6 +225,84 @@ class DailyOnceRunnerTests(unittest.TestCase):
         report = daily.run()
         self.assertEqual(report.status, runner.STATUS_SUCCESS)
 
+    def test_skip_if_empty_input_skips_job_without_running_script(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            marker = root / "ran.txt"
+            script = root / "would_run.py"
+            script.write_text(f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
+            (root / "candidates.csv").write_text("Ticker\n", encoding="utf-8")
+
+            jobs = [
+                runner.JobSpec(
+                    "option-scan",
+                    "would_run.py",
+                    args=("--input", "candidates.csv"),
+                    skip_if_empty_input=True,
+                )
+            ]
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=jobs,
+                state_path=root / "state.json",
+                lock_path=root / "run.lock",
+                today_fn=lambda: date(2026, 8, 27),
+            )
+            report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_SUCCESS)
+            self.assertTrue(report.jobs[0].skipped)
+            self.assertFalse(marker.exists())
+
+    def test_skip_if_empty_input_runs_job_when_candidates_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            marker = root / "ran.txt"
+            script = root / "would_run.py"
+            script.write_text(f"open({str(marker)!r}, 'w').write('ran')\n", encoding="utf-8")
+            (root / "candidates.csv").write_text("Ticker\nTCS\nINFY\n", encoding="utf-8")
+
+            jobs = [
+                runner.JobSpec(
+                    "option-scan",
+                    "would_run.py",
+                    args=("--input", "candidates.csv"),
+                    skip_if_empty_input=True,
+                )
+            ]
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=jobs,
+                state_path=root / "state.json",
+                lock_path=root / "run.lock",
+                today_fn=lambda: date(2026, 8, 27),
+            )
+            report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_SUCCESS)
+            self.assertFalse(report.jobs[0].skipped)
+            self.assertTrue(marker.exists())
+
+    def test_skip_if_empty_input_treats_missing_file_as_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            jobs = [
+                runner.JobSpec(
+                    "option-scan",
+                    "does_not_exist.py",
+                    args=("--input", "missing_candidates.csv"),
+                    skip_if_empty_input=True,
+                )
+            ]
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=jobs,
+                state_path=root / "state.json",
+                lock_path=root / "run.lock",
+                today_fn=lambda: date(2026, 8, 27),
+            )
+            report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_SUCCESS)
+            self.assertTrue(report.jobs[0].skipped)
+
     def test_missing_script_is_a_failed_job(self) -> None:
         jobs = [runner.JobSpec("missing", "does_not_exist.py")]
         daily = runner.DailyOnceRunner(
@@ -233,7 +323,7 @@ class DailyOnceRunnerTests(unittest.TestCase):
 class JobsConfigAndCliTests(unittest.TestCase):
     def test_bundled_jobs_file_points_at_real_scripts(self) -> None:
         jobs = runner.load_jobs(runner.DEFAULT_JOBS_PATH)
-        self.assertGreaterEqual(len(jobs), 4)
+        self.assertGreaterEqual(len(jobs), 5)
         enabled = [job for job in jobs if job.enabled]
         self.assertEqual(
             [job.script for job in enabled],
@@ -242,6 +332,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "bearisbiasnifty500.py",
                 "nifty500_xy_intersect.py",
                 "rangeboundstocks.py",
+                "merge_ticker_candidates.py",
+                "combinedoptionanalyzedv8.py",
             ],
         )
         for job in jobs:
@@ -249,6 +341,28 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 (runner.REPO_ROOT / job.script).exists(),
                 f"configured script is missing: {job.script}",
             )
+
+    def test_option_scan_reads_merged_candidates_and_skips_when_empty(self) -> None:
+        jobs = {job.name: job for job in runner.load_jobs(runner.DEFAULT_JOBS_PATH)}
+
+        merge_job = jobs["merge-option-candidates"]
+        self.assertEqual(
+            list(merge_job.args),
+            [
+                "--sources",
+                "Bullish_Bias_Analysis.xlsx",
+                "Bearish_Momentum_Analysis.xlsx",
+                "Strangle_Candidate_Analysis.xlsx",
+                "--output",
+                "Option_Scan_Candidates.csv",
+            ],
+        )
+
+        option_job = jobs["combined-option-v8"]
+        self.assertTrue(option_job.skip_if_empty_input)
+        self.assertEqual(option_job.input_path, "Option_Scan_Candidates.csv")
+        for flag in ("--browser-impersonation", "--request-delay", "1.5", "--max-retries", "6"):
+            self.assertIn(flag, option_job.args)
 
     def test_status_cli_reports_success_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

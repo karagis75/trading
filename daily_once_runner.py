@@ -8,6 +8,7 @@ triggers exit immediately instead of repeating the work.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import os
@@ -103,6 +104,7 @@ class JobSpec:
     args: tuple[str, ...] = ()
     enabled: bool = True
     timeout_seconds: float | None = None
+    skip_if_empty_input: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "JobSpec":
@@ -119,7 +121,16 @@ class JobSpec:
             args=tuple(str(part) for part in raw.get("args") or ()),
             enabled=bool(raw.get("enabled", True)),
             timeout_seconds=float(timeout) if timeout is not None else None,
+            skip_if_empty_input=bool(raw.get("skip_if_empty_input", False)),
         )
+
+    @property
+    def input_path(self) -> str | None:
+        """Value passed after '--input' in args, if any."""
+        for flag, value in zip(self.args, self.args[1:]):
+            if flag == "--input":
+                return value
+        return None
 
 
 @dataclass(frozen=True)
@@ -290,10 +301,40 @@ class DailyOnceRunner:
         finally:
             lock.release()
 
+    def _resolve_path(self, raw_path: str) -> Path:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = (self.repo_root / path).resolve()
+        return path
+
+    def _has_input_rows(self, input_path: str) -> bool:
+        """True when a CSV input has at least one data row below the header."""
+        path = self._resolve_path(input_path)
+        if not path.exists():
+            return False
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                rows = csv.reader(handle)
+                next(rows, None)  # header
+                return next(rows, None) is not None
+        except OSError:
+            return False
+
     def _execute_job(self, job: JobSpec) -> JobResult:
-        script_path = Path(job.script).expanduser()
-        if not script_path.is_absolute():
-            script_path = (self.repo_root / script_path).resolve()
+        if job.skip_if_empty_input:
+            input_path = job.input_path
+            if input_path is not None and not self._has_input_rows(input_path):
+                message = f"No candidates in '{input_path}'; skipping {job.name}."
+                LOGGER.info(message)
+                return JobResult(
+                    name=job.name,
+                    returncode=0,
+                    duration_seconds=0.0,
+                    skipped=True,
+                    message=message,
+                )
+
+        script_path = self._resolve_path(job.script)
         if not script_path.exists():
             message = f"Script not found: {script_path}"
             LOGGER.error(message)
