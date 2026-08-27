@@ -226,7 +226,7 @@ function analyzeFibPinball(symbol, rows) {
 
         if (curPrice < w2c.price) {
             // Drop validation
-        } else if (curPrice <= w1c.high) {
+        } else if (curPrice <= w1c.price) {
             if (daysSinceW2 <= 30 && curPrice > w2c.price) {
                 waveLabel       = 'Early Wave 1 of 3';
                 waveConfidence  = 55;
