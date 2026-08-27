@@ -334,7 +334,9 @@ function detectEarlyWave1(cleanSymbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.01 || gainFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorLow   = Math.min(...priorSlice.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);

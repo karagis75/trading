@@ -332,7 +332,9 @@ function detectEarlyBearishWave1(cleanSymbol, rows, useRows, curPrice, curDate) 
     if (lossFromW0 < 0.01 || lossFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorHigh   = Math.max(...useRows.slice(preW0Start, w0Idx).map(r => r.high));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorHigh   = Math.max(...priorSlice.map(r => r.high));
     if (w0High <= priorHigh) return null; 
     
     const slice10 = useRows.slice(-10);
