@@ -1,0 +1,61 @@
+{
+  "name": "TradingDailyScans",
+  "description": "Jobs started by the 8 AM / first-logon Windows task. Disable any scanner you do not want in the daily pass.",
+  "jobs": [
+    {
+      "name": "bullish-bias-nifty500",
+      "enabled": true,
+      "script": "bullishbiasnifty500.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "Bullish_Bias_Analysis.xlsx"
+      ]
+    },
+    {
+      "name": "bearish-bias-nifty500",
+      "enabled": true,
+      "script": "bearisbiasnifty500.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "Bearish_Momentum_Analysis.xlsx"
+      ]
+    },
+    {
+      "name": "nifty500-xy-intersect",
+      "enabled": true,
+      "script": "nifty500_xy_intersect.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "nifty500_xy_matrix_signals.csv"
+      ]
+    },
+    {
+      "name": "rangebound-stocks",
+      "enabled": true,
+      "script": "rangeboundstocks.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "Strangle_Candidate_Analysis.xlsx"
+      ]
+    },
+    {
+      "name": "combined-option-v8",
+      "enabled": false,
+      "script": "combinedoptionanalyzedv8.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "Combined_Option_Spread_Analysis.xlsx"
+      ]
+    }
+  ]
+}
