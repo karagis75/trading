@@ -451,11 +451,11 @@ def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
 
 
 def bid_price(option: dict[str, Any]) -> float:
-    return float(option.get("bidprice") or option.get("buyPrice1") or 0)
+    return float(option.get("bidprice") or option.get("bidPrice") or option.get("buyPrice1") or 0)
 
 
 def ask_price(option: dict[str, Any]) -> float:
-    return float(option.get("askPrice") or option.get("sellPrice1") or 0)
+    return float(option.get("askPrice") or option.get("askprice") or option.get("sellPrice1") or 0)
 
 
 def traded_volume(option: dict[str, Any]) -> int:
@@ -864,7 +864,12 @@ def build_short_iron_butterfly_opportunity(
     otm_call: dict[str, Any], otm_put: dict[str, Any],
     max_open_interest: int, expiry: str, iv_decimal: float
 ) -> dict[str, Any] | None:
-    atm_strike = float(atm_call["strikePrice"])
+    call_strike = float(atm_call["strikePrice"])
+    put_strike = float(atm_put["strikePrice"])
+    if call_strike != put_strike:
+        return None
+
+    atm_strike = call_strike
     otm_call_strike = float(otm_call["strikePrice"])
     otm_put_strike = float(otm_put["strikePrice"])
 

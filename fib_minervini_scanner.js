@@ -116,6 +116,10 @@ function processCustomScanner(symbol, rows) {
         const w2Retrace = (w1.price - w2.price) / w1Amp;
         if (w2Retrace < 0.236 || w2Retrace > 0.886) continue;
 
+        // Setup invalidated once price closes back below the W2 low; don't let a
+        // negative extension ratio still masquerade as an active Wave 1/3/5 label.
+        if (curClose < w2.price) continue;
+
         extRatio = (curClose - w2.price) / w1Amp;
         if (extRatio <= 0.618) waveLabel = 'Wave 1 of 3 (Pinball)';
         else if (extRatio <= 1.236) waveLabel = 'Wave 3 Pinball Breakout';
