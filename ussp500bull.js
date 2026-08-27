@@ -8,7 +8,7 @@ const https = require('https');
 
 const SYMBOLS_FILE = process.env.SYMBOLS_FILE 
     ? path.resolve(__dirname, process.env.SYMBOLS_FILE)
-    : path.join(__dirname, 'data', 'sp500.csv'); // Default modified for S&P 500
+    : path.join(__dirname, 'sp500.csv'); // Default modified for S&P 500
 
 // Cache directory for Yahoo Finance JSON files
 const CACHE_DIR = path.join(__dirname, 'data', 'yahoo_cache');
@@ -27,9 +27,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toYYYYMMDDStr(dateObj) {
     return (
-        String(dateObj.getFullYear()) +
-        String(dateObj.getMonth() + 1).padStart(2, '0') +
-        String(dateObj.getDate()).padStart(2, '0')
+        String(dateObj.getUTCFullYear()) +
+        String(dateObj.getUTCMonth() + 1).padStart(2, '0') +
+        String(dateObj.getUTCDate()).padStart(2, '0')
     );
 }
 
@@ -38,7 +38,7 @@ function toYYYYMMDDStr(dateObj) {
 function downloadYahooData(symbol, period1, period2) {
     // Modified for US markets: Use native symbols directly without Indian market extensions (.NS)
     const yahooSymbol = symbol.trim().toUpperCase();
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
         const options = {
@@ -89,16 +89,16 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
     try {
         const json = await downloadYahooData(symbol, period1, period2);
         const chart = json.chart?.result?.[0];
-        if (!chart || !chart.timestamp) return [];
+        const indicators = chart?.indicators?.quote?.[0];
+        if (!chart?.timestamp || !indicators) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
-            // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            const values = [timestamps[i], indicators.open?.[i], indicators.high?.[i],
+                indicators.low?.[i], indicators.close?.[i]];
+            if (!values.every(Number.isFinite)) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -109,7 +109,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }

@@ -126,19 +126,26 @@ def effective_iv(context: "MarketContext", india_vix: float) -> float:
 def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # Flatten MultiIndex columns if present (from yfinance)
+    required = ["Open", "High", "Low", "Close"]
+
+    # yfinance can return a MultiIndex even when one ticker was requested.
+    # Prefer the level containing the OHLC name and remove duplicate columns
+    # created by multi-ticker responses.
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [col[0] for col in df.columns]
+        df.columns = [
+            next((str(level) for level in column if str(level) in required), str(column[0]))
+            for column in df.columns
+        ]
+        df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
-    # Clean missing OHLC data & derive Close if NaN
-    df[["Open", "High", "Low", "Close"]] = df[["Open", "High", "Low", "Close"]].ffill().bfill()
-    if df["Close"].isna().any():
-        df["Close"] = df["Close"].fillna((df["High"] + df["Low"]) / 2).fillna(df["Open"])
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"Price data is missing required columns: {', '.join(missing)}")
 
-    # Ensure required columns are float64
-    for col in ["Open", "High", "Low", "Close"]:
-        if col in df.columns:
-            df[col] = df[col].astype(float)
+    # Never backfill market data: using a future candle to fill an earlier
+    # missing candle creates look-ahead bias in the generated signal.
+    df[required] = df[required].apply(pd.to_numeric, errors="coerce").ffill()
+    df = df.dropna(subset=required).copy()
 
     # EMAs
     df["EMA9"] = df["Close"].ewm(span=9, adjust=False).mean()
@@ -221,6 +228,9 @@ def detect_market_trend_detailed(
             return "unknown", diag
 
         df = calculate_technical_indicators(df)
+        if len(df) < 50:
+            diag["Fetch Error"] = f"Insufficient usable history after cleaning ({len(df)} rows, need >=50)"
+            return "unknown", diag
         curr = df.iloc[-1]
         prev = df.iloc[-2]
 
@@ -361,7 +371,8 @@ def create_nse_session(
 
     response = session.get(NSE_HOME_URL, timeout=10)
     response.raise_for_status()
-    session.get(f"{NSE_HOME_URL}/option-chain", timeout=10)
+    option_chain_page = session.get(f"{NSE_HOME_URL}/option-chain", timeout=10)
+    option_chain_page.raise_for_status()
     return session
 
 
@@ -390,9 +401,12 @@ def get_json(session: Any, url: str, **params: Any) -> dict[str, Any] | None:
 def fetch_india_vix(session: Any, fallback: float) -> float:
     payload = get_json(session, INDICES_URL)
     for index in (payload or {}).get("data", []):
-        if index.get("index") == "INDIA VIX":
+        index_name = str(index.get("index") or index.get("indexSymbol") or "").upper()
+        if index_name == "INDIA VIX":
             try:
-                return float(index["last"])
+                value = _safe_float(index.get("last") or index.get("lastPrice") or index.get("indexValue"))
+                if value > 0:
+                    return value
             except (KeyError, TypeError, ValueError):
                 break
     return fallback
@@ -417,6 +431,9 @@ def fetch_option_chain(
     selected_expiry = expiry or (expiry_dates[0] if expiry_dates else None)
     if not selected_expiry:
         return None
+    if expiry_dates and selected_expiry not in expiry_dates:
+        LOGGER.warning("Requested expiry %s is unavailable for %s.", selected_expiry, symbol)
+        return None
 
     payload = get_json(
         session,
@@ -431,7 +448,25 @@ def fetch_option_chain(
 
 
 def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
-    return data.get("records", {}).get("data") or []
+    records = data.get("records", {}).get("data") or []
+    selected_expiry = data.get("_selected_expiry")
+    if not selected_expiry:
+        return records
+
+    # The NSE endpoint may include more than the requested expiry. Restrict
+    # OI, IV, and strategy legs to the expiry that was actually requested.
+    expiry_aware = [
+        row for row in records
+        if row.get("expiryDate") or row.get("expiryDates")
+    ]
+    if not expiry_aware:
+        return records
+
+    return [
+        row for row in expiry_aware
+        if row.get("expiryDate") == selected_expiry
+        or selected_expiry in (row.get("expiryDates") or [])
+    ]
 
 
 def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
@@ -451,15 +486,15 @@ def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
 
 
 def bid_price(option: dict[str, Any]) -> float:
-    return float(option.get("bidprice") or option.get("buyPrice1") or 0)
+    return _safe_float(option.get("bidprice") or option.get("buyPrice1"))
 
 
 def ask_price(option: dict[str, Any]) -> float:
-    return float(option.get("askPrice") or option.get("sellPrice1") or 0)
+    return _safe_float(option.get("askPrice") or option.get("sellPrice1"))
 
 
 def traded_volume(option: dict[str, Any]) -> int:
-    return int(option.get("totalTradedVolume") or option.get("volume") or 0)
+    return _safe_int(option.get("totalTradedVolume") or option.get("volume"))
 
 
 def bid_ask_spread_pct(option: dict[str, Any]) -> float:
@@ -471,7 +506,7 @@ def option_is_tradeable(option: dict[str, Any], config: ScannerConfig) -> bool:
     return (
         bid_price(option) >= config.min_bid
         and ask_price(option) > 0
-        and int(option.get("openInterest") or 0) >= config.min_open_interest
+        and _safe_int(option.get("openInterest")) >= config.min_open_interest
         and traded_volume(option) >= config.min_volume
         and bid_ask_spread_pct(option) <= config.max_bid_ask_spread_pct
     )
@@ -489,25 +524,24 @@ def build_market_context(
     if not records:
         return None
 
-    underlying_price = float(data["records"].get("underlyingValue") or 0)
+    underlying_price = _safe_float(data["records"].get("underlyingValue"))
     if underlying_price <= 0:
         for row in records:
-            underlying_price = float(
+            underlying_price = _safe_float(
                 row.get("CE", {}).get("underlyingValue")
                 or row.get("PE", {}).get("underlyingValue")
-                or 0
             )
             if underlying_price > 0:
                 break
     if underlying_price <= 0:
         return None
 
-    total_ce_oi = sum(int(row.get("CE", {}).get("openInterest") or 0) for row in records)
-    total_pe_oi = sum(int(row.get("PE", {}).get("openInterest") or 0) for row in records)
+    total_ce_oi = sum(_safe_int(row.get("CE", {}).get("openInterest")) for row in records)
+    total_pe_oi = sum(_safe_int(row.get("PE", {}).get("openInterest")) for row in records)
     pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 1.0
     max_open_interest = max(
-        [int(row.get("CE", {}).get("openInterest") or 0) for row in records]
-        + [int(row.get("PE", {}).get("openInterest") or 0) for row in records]
+        [_safe_int(row.get("CE", {}).get("openInterest")) for row in records]
+        + [_safe_int(row.get("PE", {}).get("openInterest")) for row in records]
         + [1]
     )
 
@@ -521,12 +555,15 @@ def build_market_context(
     closest_row = min(
         records,
         key=lambda row: abs(
-            float((row.get("CE") or {}).get("strikePrice") or (row.get("PE") or {}).get("strikePrice") or 0)
+            _safe_float(
+                (row.get("CE") or {}).get("strikePrice")
+                or (row.get("PE") or {}).get("strikePrice")
+            )
             - underlying_price
         ),
     )
-    ce_iv = float((closest_row.get("CE") or {}).get("impliedVolatility") or 0)
-    pe_iv = float((closest_row.get("PE") or {}).get("impliedVolatility") or 0)
+    ce_iv = _safe_float((closest_row.get("CE") or {}).get("impliedVolatility"))
+    pe_iv = _safe_float((closest_row.get("PE") or {}).get("impliedVolatility"))
     ivs = [v for v in (ce_iv, pe_iv) if v > 0]
     if ivs:
         atm_iv = (sum(ivs) / len(ivs)) / 100.0
@@ -591,7 +628,16 @@ def pcr_allows_strategy(strategy: str, bias: str) -> bool:
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
-        return float(value)
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        parsed = float(value)
+        return int(parsed) if math.isfinite(parsed) else default
     except (TypeError, ValueError):
         return default
 
@@ -763,7 +809,7 @@ def build_opportunity(
     max_profit = spread_width - net_debit
     rr_ratio = max_profit / net_debit
     cost_efficiency = net_debit / spread_width
-    avg_open_interest = (int(buy_leg.get("openInterest") or 0) + int(sell_leg.get("openInterest") or 0)) / 2
+    avg_open_interest = (_safe_int(buy_leg.get("openInterest")) + _safe_int(sell_leg.get("openInterest"))) / 2
     bid_ask_spread = (ask_price(buy_leg) - bid_price(buy_leg) + ask_price(sell_leg) - bid_price(sell_leg))
 
     dte = days_to_expiry(expiry)
@@ -822,7 +868,7 @@ def build_credit_spread_opportunity(
 
     max_loss = spread_width - credit
     return_on_risk = credit / max_loss
-    avg_open_interest = (int(short_leg.get("openInterest") or 0) + int(long_leg.get("openInterest") or 0)) / 2
+    avg_open_interest = (_safe_int(short_leg.get("openInterest")) + _safe_int(long_leg.get("openInterest"))) / 2
     bid_ask_spread = (ask_price(short_leg) - bid_price(short_leg) + ask_price(long_leg) - bid_price(long_leg))
 
     dte = days_to_expiry(expiry)
@@ -891,8 +937,8 @@ def build_short_iron_butterfly_opportunity(
     prob_of_profit = max(0.0, min(1.0, prob_above_lower + prob_below_upper - 1.0))
 
     avg_oi = (
-        int(atm_call.get("openInterest") or 0) + int(atm_put.get("openInterest") or 0) +
-        int(otm_call.get("openInterest") or 0) + int(otm_put.get("openInterest") or 0)
+        _safe_int(atm_call.get("openInterest")) + _safe_int(atm_put.get("openInterest")) +
+        _safe_int(otm_call.get("openInterest")) + _safe_int(otm_put.get("openInterest"))
     ) / 4
     bid_ask = (
         ask_price(atm_call) - bid_price(atm_call) + ask_price(atm_put) - bid_price(atm_put) +
@@ -949,7 +995,7 @@ def build_short_straddle_opportunity(
     prob_below_upper = probability_otm(underlying_price, upper_be, iv_decimal, dte, "CALL")
     prob_of_profit = max(0.0, min(1.0, prob_above_lower + prob_below_upper - 1.0))
 
-    avg_oi = (int(atm_call.get("openInterest") or 0) + int(atm_put.get("openInterest") or 0)) / 2
+    avg_oi = (_safe_int(atm_call.get("openInterest")) + _safe_int(atm_put.get("openInterest"))) / 2
     bid_ask = (ask_price(atm_call) - bid_price(atm_call) + ask_price(atm_put) - bid_price(atm_put))
     premium_pct = credit / underlying_price
     pop_score = min(35.0, prob_of_profit / 0.6 * 35.0)
@@ -1007,7 +1053,7 @@ def build_long_strangle_opportunity(
     prob_down = probability_itm(underlying_price, lower_be, iv_decimal, dte, "PUT")
     prob_of_profit = min(1.0, prob_up + prob_down)
 
-    avg_oi = (int(otm_call.get("openInterest") or 0) + int(otm_put.get("openInterest") or 0)) / 2
+    avg_oi = (_safe_int(otm_call.get("openInterest")) + _safe_int(otm_put.get("openInterest"))) / 2
     bid_ask = (ask_price(otm_call) - bid_price(otm_call) + ask_price(otm_put) - bid_price(otm_put))
     move_efficiency = min(1.0, expected_move / total_debit) if total_debit > 0 else 0.0
     pop_score = min(35.0, prob_of_profit / 0.5 * 35.0)

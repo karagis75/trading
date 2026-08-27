@@ -58,17 +58,33 @@ function headers(cookie = '') {
 }
 
 async function initialiseSession() {
-  const response = await fetch(OPTION_CHAIN_PAGE, { headers: headers(), redirect: 'follow' });
-  if (!response.ok) throw new Error(`NSE session page returned HTTP ${response.status}`);
-  const cookie = cookieHeader(response);
-  if (!cookie) throw new Error('NSE did not provide session cookies; try again later.');
-  return cookie;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(OPTION_CHAIN_PAGE, {
+      headers: headers(), redirect: 'follow', signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`NSE session page returned HTTP ${response.status}`);
+    const cookie = cookieHeader(response);
+    if (!cookie) throw new Error('NSE did not provide session cookies; try again later.');
+    return cookie;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('NSE session page timed out after 20 seconds');
+    throw error;
+  } finally { clearTimeout(timeout); }
 }
 
 async function getJson(url, cookie, label) {
-  const response = await fetch(url, { headers: headers(cookie) });
-  if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
-  return response.json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(url, { headers: headers(cookie), signal: controller.signal });
+    if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`${label} timed out after 20 seconds`);
+    throw error;
+  } finally { clearTimeout(timeout); }
 }
 
 async function fetchSymbol(symbol, requestedExpiry, cookie) {

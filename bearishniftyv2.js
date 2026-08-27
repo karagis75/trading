@@ -26,17 +26,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toYYYYMMDDStr(dateObj) {
     return (
-        String(dateObj.getFullYear()) +
-        String(dateObj.getMonth() + 1).padStart(2, '0') +
-        String(dateObj.getDate()).padStart(2, '0')
+        String(dateObj.getUTCFullYear()) +
+        String(dateObj.getUTCMonth() + 1).padStart(2, '0') +
+        String(dateObj.getUTCDate()).padStart(2, '0')
     );
 }
 
 // — Direct HTTPS Getter for Yahoo Finance ——————————————————————————————————
 
 function downloadYahooData(yahooSymbol, period1, period2) {
-    // Caret index symbols require raw inclusion to avoid query parsing rejections
-    const targetSymbol = yahooSymbol.startsWith('^') ? yahooSymbol : encodeURIComponent(yahooSymbol);
+    const targetSymbol = encodeURIComponent(yahooSymbol);
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${targetSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
@@ -89,15 +88,16 @@ async function fetchIndexHistoryFromYahoo(symbol) {
     try {
         const json = await downloadYahooData(symbol, period1, period2);
         const chart = json.chart?.result?.[0];
-        if (!chart || !chart.timestamp) return [];
+        const indicators = chart?.indicators?.quote?.[0];
+        if (!chart?.timestamp || !indicators) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
-            if (indicators.open?.[i] == null || indicators.close?.[i] == null || indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
+            const values = [timestamps[i], indicators.open?.[i], indicators.high?.[i],
+                indicators.low?.[i], indicators.close?.[i]];
+            if (!values.every(Number.isFinite)) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -107,7 +107,7 @@ async function fetchIndexHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
