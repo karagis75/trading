@@ -177,6 +177,10 @@ def calculate_indicators(
     )
     directional_sum = (plus_di + minus_di).replace(0, np.nan)
     dx = 100 * (plus_di - minus_di).abs() / directional_sum
+    # A fully flat window has no directional bias, so its DX is zero. Keep
+    # the initial warm-up NaNs intact while avoiding a permanently NaN ADX
+    # after a flat period.
+    dx = dx.mask(tr_smooth.notna() & directional_sum.isna(), 0.0)
     result["ADX"] = dx.rolling(settings.adx_period).mean()
 
     return result
@@ -227,28 +231,30 @@ def evaluate_intersect_signal(
     current = df.iloc[-1]
     previous = df.iloc[-2]
     recent_adx = df["ADX"].iloc[-settings.adx_lookback :]
-    values = current[["Close", "8_DMA", "18_DMA", "ATR", "ADX"]]
-    if values.isna().any() or previous[["18_DMA", "ADX"]].isna().any():
+    fast_dma_column = f"{settings.fast_dma}_DMA"
+    slow_dma_column = f"{settings.slow_dma}_DMA"
+    values = current[["Close", fast_dma_column, slow_dma_column, "ATR", "ADX"]]
+    if values.isna().any() or previous[[slow_dma_column, "ADX"]].isna().any():
         return None
 
     adx_low_recently = recent_adx.lt(settings.adx_low_threshold).any()
     adx_turning_up = current["ADX"] > previous["ADX"]
-    dma_18_rising = current["18_DMA"] > previous["18_DMA"]
-    current_distance = abs(current["8_DMA"] - current["18_DMA"])
-    previous_distance = abs(previous["8_DMA"] - previous["18_DMA"])
+    dma_18_rising = current[slow_dma_column] > previous[slow_dma_column]
+    current_distance = abs(current[fast_dma_column] - current[slow_dma_column])
+    previous_distance = abs(previous[fast_dma_column] - previous[slow_dma_column])
     dma_diverging = current_distance > previous_distance
     a_adx_signal = (
         adx_low_recently and adx_turning_up and dma_18_rising and dma_diverging
     )
 
-    in_uptrend = current["8_DMA"] > current["18_DMA"] and dma_18_rising
+    in_uptrend = current[fast_dma_column] > current[slow_dma_column] and dma_18_rising
     retest_8dma = (
-        current["Low"] <= current["8_DMA"]
-        and current["Close"] >= current["8_DMA"] * 0.995
+        current["Low"] <= current[fast_dma_column]
+        and current["Close"] >= current[fast_dma_column] * 0.995
     )
     retest_18dma = (
-        current["Low"] <= current["18_DMA"]
-        and current["Close"] >= current["18_DMA"] * 0.995
+        current["Low"] <= current[slow_dma_column]
+        and current["Close"] >= current[slow_dma_column] * 0.995
     )
     c_mar_signal = in_uptrend and (retest_8dma or retest_18dma)
 
@@ -261,7 +267,9 @@ def evaluate_intersect_signal(
     close_price = float(current["Close"])
     atr_value = float(current["ATR"])
     trailing_exit_dma = (
-        float(current["8_DMA"]) if a_adx_signal else float(current["18_DMA"])
+        float(current[fast_dma_column])
+        if a_adx_signal
+        else float(current[slow_dma_column])
     )
     target_100bp = round(close_price * 1.01, 2)
     factor_target = round(close_price + atr_value * settings.atr_target_multiple, 2)
