@@ -437,11 +437,11 @@ def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
 
 
 def bid_price(option: dict[str, Any]) -> float:
-    return float(option.get("bidprice") or option.get("buyPrice1") or 0)
+    return float(option.get("bidprice") or option.get("bidPrice") or option.get("buyPrice1") or 0)
 
 
 def ask_price(option: dict[str, Any]) -> float:
-    return float(option.get("askPrice") or option.get("sellPrice1") or 0)
+    return float(option.get("askPrice") or option.get("askprice") or option.get("sellPrice1") or 0)
 
 
 def traded_volume(option: dict[str, Any]) -> int:
