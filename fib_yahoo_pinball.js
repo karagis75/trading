@@ -99,7 +99,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open?.[i] == null || indicators.close?.[i] == null || indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -360,7 +360,9 @@ function detectEarlyWave1(symbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.05 || gainFromW0 > 1.0) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorLow   = Math.min(...priorSlice.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
