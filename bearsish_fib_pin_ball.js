@@ -38,7 +38,7 @@ function toYYYYMMDDStr(dateObj) {
 
 function downloadYahooData(symbol, period1, period2) {
     const yahooSymbol = symbol.endsWith('.NS') ? symbol : `${symbol}.NS`;
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
         const options = {
@@ -90,12 +90,15 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         if (!chart || !chart.timestamp) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
+        const indicators = chart.indicators?.quote?.[0];
+        if (!indicators) return [];
+        const adjClose = chart.indicators.adjclose?.[0]?.adjclose;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            const closePx = (adjClose && adjClose[i] != null) ? adjClose[i] : indicators.close[i];
+            if (indicators.open?.[i] == null || indicators.high?.[i] == null ||
+                indicators.low?.[i] == null || closePx == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -105,7 +108,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  closePx, 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -360,7 +363,9 @@ function detectEarlyBearishWave1(symbol, rows, useRows, curPrice, curDate) {
     if (lossFromW0 < 0.05 || lossFromW0 > 0.70) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorHigh   = Math.max(...useRows.slice(preW0Start, w0Idx).map(r => r.high));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (priorSlice.length === 0) return null;
+    const priorHigh   = Math.max(...priorSlice.map(r => r.high));
     if (w0High <= priorHigh) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -516,4 +521,8 @@ async function main() {
     console.log(`  ${outWave5}`);
 }
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+if (require.main === module) {
+    main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+}
+
+module.exports = { analyzeBearishFibPinball, detectEarlyBearishWave1, findPivots };

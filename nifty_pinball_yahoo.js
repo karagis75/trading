@@ -94,12 +94,15 @@ async function fetchIndexHistoryFromYahoo(symbol) {
         if (!chart || !chart.timestamp) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
+        const indicators = chart.indicators?.quote?.[0];
+        if (!indicators) return [];
+        const adjClose = chart.indicators.adjclose?.[0]?.adjclose;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
-            if (indicators.open?.[i] == null || indicators.close?.[i] == null || indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
+            const closePx = (adjClose && adjClose[i] != null) ? adjClose[i] : indicators.close[i];
+            if (indicators.open?.[i] == null || indicators.high?.[i] == null ||
+                indicators.low?.[i] == null || closePx == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -109,7 +112,7 @@ async function fetchIndexHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  closePx, 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -226,7 +229,7 @@ function analyzeFibPinball(symbol, rows) {
 
         if (curPrice < w2c.price) {
             // Drop validation
-        } else if (curPrice <= w1c.high) {
+        } else if (curPrice <= w1c.price) {
             if (daysSinceW2 <= 30 && curPrice > w2c.price) {
                 waveLabel       = 'Early Wave 1 of 3';
                 waveConfidence  = 55;
@@ -334,7 +337,9 @@ function detectEarlyWave1(cleanSymbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.01 || gainFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (priorSlice.length === 0) return null;
+    const priorLow   = Math.min(...priorSlice.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -470,4 +475,8 @@ async function main() {
     console.log(`\nGenerated CSV reports stored in: ${OUT_DIR}`);
 }
 
-main().catch(err => { console.error('Fatal Script Failure:', err); process.exit(1); });
+if (require.main === module) {
+    main().catch(err => { console.error('Fatal Script Failure:', err); process.exit(1); });
+}
+
+module.exports = { analyzeFibPinball, detectEarlyWave1, findPivots };
