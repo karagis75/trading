@@ -2,6 +2,7 @@ import argparse
 import io
 import logging
 import math
+import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -335,9 +336,9 @@ def load_cookie_header(cookie_header: str | None, cookie_file: str | None) -> st
     return None
 
 
-def create_nse_session(
-    cookie_header: str | None = None,
-    use_browser_impersonation: bool = False,
+def _build_raw_nse_session(
+    cookie_header: str | None,
+    use_browser_impersonation: bool,
 ) -> Any:
     if use_browser_impersonation:
         if curl_requests is None:
@@ -363,6 +364,89 @@ def create_nse_session(
     return session
 
 
+class ResilientNseSession:
+    """Wraps an NSE session with request pacing and reset/retry recovery.
+
+    NSE (Akamai) resets HTTP/2 streams (curl error 92 / INTERNAL_ERROR) once a
+    session issues bursts of rapid, unpaced requests -- typically after
+    roughly 25-40 calls when browser impersonation is used. This wrapper
+    throttles requests, retries transient failures with backoff, and
+    transparently rebuilds the underlying session (fresh TLS handshake +
+    cookies) when a request keeps failing.
+    """
+
+    def __init__(
+        self,
+        cookie_header: str | None,
+        use_browser_impersonation: bool,
+        request_delay: float = 0.75,
+        max_retries: int = 4,
+    ) -> None:
+        self._cookie_header = cookie_header
+        self._use_browser_impersonation = use_browser_impersonation
+        self._request_delay = max(0.0, request_delay)
+        self._max_retries = max(1, max_retries)
+        self._last_request_at = 0.0
+        self._session = _build_raw_nse_session(cookie_header, use_browser_impersonation)
+
+    def _throttle(self) -> None:
+        if self._request_delay <= 0:
+            return
+        remaining = self._request_delay - (time.monotonic() - self._last_request_at)
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _refresh(self) -> None:
+        try:
+            self._session = _build_raw_nse_session(
+                self._cookie_header, self._use_browser_impersonation
+            )
+        except Exception as exc:
+            LOGGER.info("Failed to refresh NSE session: %s", exc)
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        last_exc: Exception | None = None
+        for attempt in range(1, self._max_retries + 1):
+            self._throttle()
+            self._last_request_at = time.monotonic()
+            try:
+                response = self._session.get(url, **kwargs)
+            except Exception as exc:
+                last_exc = exc
+                LOGGER.info(
+                    "Request attempt %d/%d failed for %s: %s",
+                    attempt, self._max_retries, url, exc,
+                )
+                if attempt < self._max_retries:
+                    time.sleep(min(2 ** attempt, 10))
+                    self._refresh()
+                continue
+
+            if response.status_code in (429, 500, 502, 503, 504) and attempt < self._max_retries:
+                LOGGER.info(
+                    "NSE returned %s for %s (attempt %d/%d), retrying...",
+                    response.status_code, url, attempt, self._max_retries,
+                )
+                time.sleep(min(2 ** attempt, 10))
+                continue
+
+            return response
+
+        assert last_exc is not None
+        raise last_exc
+
+
+def create_nse_session(
+    cookie_header: str | None = None,
+    use_browser_impersonation: bool = False,
+    request_delay: float = 0.75,
+    max_retries: int = 4,
+) -> ResilientNseSession:
+    return ResilientNseSession(
+        cookie_header, use_browser_impersonation, request_delay, max_retries
+    )
+
+
 def get_json(session: Any, url: str, **params: Any) -> dict[str, Any] | None:
     api_headers = {
         **HEADERS,
@@ -381,7 +465,7 @@ def get_json(session: Any, url: str, **params: Any) -> dict[str, Any] | None:
         response.raise_for_status()
         return response.json()
     except Exception as exc:
-        LOGGER.warning("Request failed for %s: %s", url, exc)
+        LOGGER.warning("Request failed for %s after retries: %s", url, exc)
     return None
 
 
@@ -1524,6 +1608,21 @@ def main() -> None:
     parser.add_argument("--cookie-header")
     parser.add_argument("--cookie-file")
     parser.add_argument("--browser-impersonation", action="store_true")
+    parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=0.75,
+        help=(
+            "Minimum seconds between NSE requests to avoid stream resets from "
+            "rate limiting (default: 0.75)."
+        ),
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=4,
+        help="Retries per NSE request before giving up, with session refresh on failure (default: 4).",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s: %(message)s")
@@ -1554,7 +1653,10 @@ def main() -> None:
     cookie_header = load_cookie_header(args.cookie_header, args.cookie_file)
 
     try:
-        session = create_nse_session(cookie_header, args.browser_impersonation)
+        session = create_nse_session(
+            cookie_header, args.browser_impersonation,
+            request_delay=args.request_delay, max_retries=args.max_retries,
+        )
     except Exception as exc:
         raise SystemExit(f"Unable to initialize NSE session: {exc}") from exc
 
