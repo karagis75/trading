@@ -126,19 +126,46 @@ def analyze_symbol(symbol: str, config: StrangleScannerConfig) -> dict[str, Any]
         return None
 
 
+def load_tickers(input_path: str) -> list[str]:
+    """Load ticker symbols from a CSV or Excel workbook."""
+    path = Path(input_path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Input file not found: {path}. Pass the real file with --input."
+        )
+
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        df_input = pd.read_csv(path)
+    elif suffix in {".xlsx", ".xls", ".xlsm", ".ods"}:
+        df_input = pd.read_excel(path)
+    else:
+        raise ValueError(
+            f"Unsupported input format '{path.suffix or '(no extension)'}'. "
+            "Use a .csv, .xlsx, .xls, .xlsm, or .ods file."
+        )
+
+    if "Ticker" not in df_input.columns:
+        raise ValueError(
+            f"Input file must contain a 'Ticker' column. "
+            f"Found: {', '.join(map(str, df_input.columns)) or '(none)'}."
+        )
+
+    return df_input["Ticker"].dropna().astype(str).str.strip().tolist()
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Scan tickers from Excel for Long Strangle Compression Setups.")
-    parser.add_argument("--input", default="NSE_Stocks_List_20251230_1617.xlsx", help="Path to input Excel file.")
+    parser = argparse.ArgumentParser(description="Scan tickers from CSV or Excel for Long Strangle Compression Setups.")
+    parser.add_argument("--input", default="NSE_Stocks_List_20251230_1617.xlsx", help="Path to input .csv or Excel file.")
     parser.add_argument("--output", default="Strangle_Candidate_Analysis.xlsx", help="Output path for results.")
     args = parser.parse_args()
 
     config = StrangleScannerConfig()
 
     try:
-        df_input = pd.read_excel(args.input)
-        tickers = df_input["Ticker"].dropna().astype(str).tolist()
+        tickers = load_tickers(args.input)
     except Exception as e:
-        print(f"Excel Error: {e}")
+        print(f"Input Error: {e}")
         return
 
     results = []
