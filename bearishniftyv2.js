@@ -93,7 +93,6 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -101,13 +100,14 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
             const d = new Date(timestamps[i] * 1000);
             
+            // Use raw OHLC consistently (mixing adjClose with unadjusted H/L breaks pivots).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol === '^NSEI' ? 'NIFTY50' : (symbol === '^NSEBANK' ? 'BANKNIFTY' : symbol),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i], 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -332,7 +332,9 @@ function detectEarlyBearishWave1(cleanSymbol, rows, useRows, curPrice, curDate) 
     if (lossFromW0 < 0.01 || lossFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorHigh   = Math.max(...useRows.slice(preW0Start, w0Idx).map(r => r.high));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorHigh   = Math.max(...priorSlice.map(r => r.high));
     if (w0High <= priorHigh) return null; 
     
     const slice10 = useRows.slice(-10);

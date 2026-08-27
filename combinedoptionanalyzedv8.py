@@ -45,6 +45,30 @@ DEFAULT_SYMBOLS = (
 
 INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
+# Map NSE index names to Yahoo Finance chart tickers (NIFTY.NS 404s).
+YAHOO_INDEX_ALIASES = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "NIFTY 50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "NIFTY BANK": "^NSEBANK",
+    "BANK NIFTY": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "^NSEMDCP50",
+    "NIFTYNXT50": "^NSMIDCP",
+}
+
+
+def yahoo_ticker(symbol: str) -> str:
+    """Resolve a trading symbol to a Yahoo Finance ticker."""
+    cleaned = symbol.strip().upper()
+    if cleaned in YAHOO_INDEX_ALIASES:
+        return YAHOO_INDEX_ALIASES[cleaned]
+    if "." in cleaned or cleaned.startswith("^"):
+        return cleaned
+    return f"{cleaned}.NS"
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -201,7 +225,7 @@ def detect_market_trend_detailed(
         diag["Fetch Error"] = "yfinance not installed"
         return "unknown", diag
 
-    formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
+    formatted_ticker = yahoo_ticker(symbol)
     diag["Ticker Used"] = formatted_ticker
     try:
         ticker = yf.Ticker(formatted_ticker)
@@ -390,7 +414,8 @@ def get_json(session: Any, url: str, **params: Any) -> dict[str, Any] | None:
 def fetch_india_vix(session: Any, fallback: float) -> float:
     payload = get_json(session, INDICES_URL)
     for index in (payload or {}).get("data", []):
-        if index.get("index") == "INDIA VIX":
+        name = str(index.get("indexSymbol") or index.get("index") or "").upper()
+        if name == "INDIA VIX":
             try:
                 return float(index["last"])
             except (KeyError, TypeError, ValueError):
@@ -864,9 +889,18 @@ def build_short_iron_butterfly_opportunity(
     otm_call: dict[str, Any], otm_put: dict[str, Any],
     max_open_interest: int, expiry: str, iv_decimal: float
 ) -> dict[str, Any] | None:
-    atm_strike = float(atm_call["strikePrice"])
+    atm_call_strike = float(atm_call["strikePrice"])
+    atm_put_strike = float(atm_put["strikePrice"])
+    # Iron butterfly requires matching ATM short strikes.
+    if atm_call_strike != atm_put_strike:
+        return None
+    atm_strike = atm_call_strike
     otm_call_strike = float(otm_call["strikePrice"])
     otm_put_strike = float(otm_put["strikePrice"])
+
+    # Wings must be strictly outside the shared ATM strike.
+    if otm_call_strike <= atm_strike or otm_put_strike >= atm_strike:
+        return None
 
     call_wing_width = otm_call_strike - atm_strike
     put_wing_width = atm_strike - otm_put_strike
@@ -1239,8 +1273,21 @@ def analyze_symbol(
         if calls and puts:
             atm_call = min(calls, key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
             atm_put  = min(puts,  key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
-            otm_calls = [o for o in calls if float(o["strikePrice"]) > context.underlying_price]
-            otm_puts  = [o for o in puts  if float(o["strikePrice"]) < context.underlying_price]
+            # Prefer a shared ATM strike when both sides trade it.
+            atm_call_strike = float(atm_call["strikePrice"])
+            atm_put_strike = float(atm_put["strikePrice"])
+            if atm_call_strike != atm_put_strike:
+                call_by_strike = {float(o["strikePrice"]): o for o in calls}
+                put_by_strike = {float(o["strikePrice"]): o for o in puts}
+                shared = sorted(
+                    set(call_by_strike) & set(put_by_strike),
+                    key=lambda s: abs(s - context.underlying_price),
+                )
+                if shared:
+                    atm_call = call_by_strike[shared[0]]
+                    atm_put = put_by_strike[shared[0]]
+            otm_calls = [o for o in calls if float(o["strikePrice"]) > float(atm_call["strikePrice"])]
+            otm_puts  = [o for o in puts  if float(o["strikePrice"]) < float(atm_put["strikePrice"])]
 
             if strategy_mode in ("selling", "both"):
                 # 1. Iron Condor (Defined Risk Net Credit)

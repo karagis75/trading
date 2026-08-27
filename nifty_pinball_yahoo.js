@@ -95,7 +95,6 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -103,13 +102,14 @@ async function fetchIndexHistoryFromYahoo(symbol) {
 
             const d = new Date(timestamps[i] * 1000);
             
+            // Use raw OHLC consistently (mixing adjClose with unadjusted H/L breaks pivots).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol === '^NSEI' ? 'NIFTY50' : (symbol === '^NSEBANK' ? 'BANKNIFTY' : symbol),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i], 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -226,7 +226,7 @@ function analyzeFibPinball(symbol, rows) {
 
         if (curPrice < w2c.price) {
             // Drop validation
-        } else if (curPrice <= w1c.high) {
+        } else if (curPrice <= w1c.price) {
             if (daysSinceW2 <= 30 && curPrice > w2c.price) {
                 waveLabel       = 'Early Wave 1 of 3';
                 waveConfidence  = 55;
@@ -334,7 +334,9 @@ function detectEarlyWave1(cleanSymbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.01 || gainFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorLow   = Math.min(...priorSlice.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);

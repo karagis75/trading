@@ -9,7 +9,7 @@ const https = require('https');
 
 const SYMBOLS_FILE = process.env.SYMBOLS_FILE 
     ? path.resolve(__dirname, process.env.SYMBOLS_FILE)
-    : path.join(__dirname, 'data', 'nifty500.csv');
+    : path.join(__dirname, 'nifty500.csv');
 
 // Cache directory for Yahoo Finance JSON files
 const CACHE_DIR = path.join(__dirname, 'data', 'yahoo_cache');
@@ -91,7 +91,6 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -99,13 +98,14 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
             const d = new Date(timestamps[i] * 1000);
             
+            // Use raw OHLC consistently (mixing adjClose with unadjusted H/L breaks pivots).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol.toUpperCase().replace('.NS', ''),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  indicators.close[i], 
                 volume: indicators.volume[i] || 0
             });
         }
@@ -360,7 +360,9 @@ function detectEarlyBearishWave1(symbol, rows, useRows, curPrice, curDate) {
     if (lossFromW0 < 0.05 || lossFromW0 > 0.70) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorHigh   = Math.max(...useRows.slice(preW0Start, w0Idx).map(r => r.high));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorHigh   = Math.max(...priorSlice.map(r => r.high));
     if (w0High <= priorHigh) return null; 
     
     const slice10 = useRows.slice(-10);

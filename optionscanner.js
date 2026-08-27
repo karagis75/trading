@@ -208,15 +208,15 @@ function printReport(report) {
   console.log('Indicative analysis only. Verify a live two-sided quote, lot size, margins, liquidity, and risk before placing any order.');
 }
 
-async function scanOne(symbol, options, cookie) {
+async function scanOne(symbol, options, cookie, indiaVix) {
   try {
     const { data, expiry } = await fetchSymbol(symbol, options.expiry, cookie);
-    return { report: analyse(data, symbol, expiry), cookie };
+    return { report: analyse(data, symbol, expiry, indiaVix), cookie };
   } catch (error) {
     if (!/HTTP 401|HTTP 403/.test(error.message)) throw error;
     const freshCookie = await initialiseSession();
     const { data, expiry } = await fetchSymbol(symbol, options.expiry, freshCookie);
-    return { report: analyse(data, symbol, expiry), cookie: freshCookie };
+    return { report: analyse(data, symbol, expiry, indiaVix), cookie: freshCookie };
   }
 }
 
@@ -228,9 +228,8 @@ async function main() {
   const reports = [];
   for (const symbol of options.symbols) {
     try {
-      const result = await scanOne(symbol, options, cookie);
+      const result = await scanOne(symbol, options, cookie, indiaVix);
       cookie = result.cookie;
-      result.report.indiaVix = indiaVix;
       reports.push(result.report);
       if (!options.json) printReport(result.report);
     } catch (error) {

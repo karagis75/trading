@@ -43,6 +43,30 @@ DEFAULT_SYMBOLS = (
 
 INDEX_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
 
+# Map NSE index names to Yahoo Finance chart tickers (NIFTY.NS 404s).
+YAHOO_INDEX_ALIASES = {
+    "NIFTY": "^NSEI",
+    "NIFTY50": "^NSEI",
+    "NIFTY 50": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "NIFTY BANK": "^NSEBANK",
+    "BANK NIFTY": "^NSEBANK",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "^NSEMDCP50",
+    "NIFTYNXT50": "^NSMIDCP",
+}
+
+
+def yahoo_ticker(symbol: str) -> str:
+    """Resolve a trading symbol to a Yahoo Finance ticker."""
+    cleaned = symbol.strip().upper()
+    if cleaned in YAHOO_INDEX_ALIASES:
+        return YAHOO_INDEX_ALIASES[cleaned]
+    if "." in cleaned or cleaned.startswith("^"):
+        return cleaned
+    return f"{cleaned}.NS"
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -133,12 +157,12 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # CCI (14 & 20)
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma_tp14 = tp.rolling(window=14).mean()
-    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    df["CCI14"] = (tp - sma_tp14) / (0.015 * mad14)
+    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
+    df["CCI14"] = ((tp - sma_tp14) / (0.015 * mad14)).fillna(0)
 
     sma_tp20 = tp.rolling(window=20).mean()
-    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
-    df["CCI20"] = (tp - sma_tp20) / (0.015 * mad20)
+    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
+    df["CCI20"] = ((tp - sma_tp20) / (0.015 * mad20)).fillna(0)
 
     # ADX (14)
     high_diff = df["High"].diff()
@@ -151,11 +175,12 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=14).mean()
+    atr = tr.rolling(window=14).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=14).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=14).mean() / atr)
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
-    df["ADX"] = dx.rolling(window=14).mean()
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
+    df["ADX"] = dx.rolling(window=14).mean().fillna(0)
 
     # Fibonacci S1
     prev_high = df["High"].shift(1)
@@ -173,7 +198,7 @@ def detect_market_trend(symbol: str, lookback_period: str = "1y") -> str:
         LOGGER.warning("yfinance package not installed. Skipping dynamic trend detection.")
         return "unknown"
 
-    formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
+    formatted_ticker = yahoo_ticker(symbol)
     try:
         ticker = yf.Ticker(formatted_ticker)
         df = ticker.history(period=lookback_period, interval="1d")
@@ -317,7 +342,8 @@ def get_json(session: Any, url: str, **params: Any) -> dict[str, Any] | None:
 def fetch_india_vix(session: Any, fallback: float) -> float:
     payload = get_json(session, INDICES_URL)
     for index in (payload or {}).get("data", []):
-        if index.get("index") == "INDIA VIX":
+        name = str(index.get("indexSymbol") or index.get("index") or "").upper()
+        if name == "INDIA VIX":
             try:
                 return float(index["last"])
             except (KeyError, TypeError, ValueError):

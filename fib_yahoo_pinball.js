@@ -9,7 +9,7 @@ const https = require('https');
 
 const SYMBOLS_FILE = process.env.SYMBOLS_FILE 
     ? path.resolve(__dirname, process.env.SYMBOLS_FILE)
-    : path.join(__dirname, 'data', 'nifty500.csv');
+    : path.join(__dirname, 'nifty500.csv');
 
 // Cache directory for Yahoo Finance JSON files
 const CACHE_DIR = path.join(__dirname, 'data', 'yahoo_cache');
@@ -94,7 +94,6 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
 
         const timestamps = chart.timestamp;
         const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -104,13 +103,14 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
             const d = new Date(timestamps[i] * 1000);
             
             // Reconstruct row objects to perfectly match the internal pipeline architecture
+            // Use raw OHLC consistently (mixing adjClose with unadjusted H/L breaks pivots).
             parsedRows.push({
                 date:   toYYYYMMDDStr(d),
                 symbol: symbol.toUpperCase().replace('.NS', ''),
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -360,7 +360,9 @@ function detectEarlyWave1(symbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.05 || gainFromW0 > 1.0) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorSlice = useRows.slice(preW0Start, w0Idx);
+    if (!priorSlice.length) return null;
+    const priorLow   = Math.min(...priorSlice.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
