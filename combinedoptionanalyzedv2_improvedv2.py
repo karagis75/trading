@@ -378,7 +378,7 @@ def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
 
 
 def bid_price(option: dict[str, Any]) -> float:
-    return float(option.get("bidprice") or option.get("buyPrice1") or 0)
+    return float(option.get("bidprice") or option.get("bidPrice") or option.get("buyPrice1") or 0)
 
 
 def ask_price(option: dict[str, Any]) -> float:
@@ -520,6 +520,13 @@ def pcr_allows_strategy(strategy: str, bias: str) -> bool:
     return False
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def add_validation_fields(
     opportunity: dict[str, Any], context: MarketContext, config: ScannerConfig
 ) -> dict[str, Any] | None:
@@ -532,7 +539,17 @@ def add_validation_fields(
         return None  # Skip rest of heavy calculations if PCR fails in enforced mode
 
     # 2. Additional Checks
-    margin_per_unit = float(opportunity["Max Loss"])
+    # Max Loss can be the string "Unlimited" for undefined-risk strategies.
+    raw_max_loss = opportunity.get("Max Loss")
+    if isinstance(raw_max_loss, str) and raw_max_loss.strip().lower() == "unlimited":
+        margin_per_unit = round(context.underlying_price * 0.20, 2)
+    else:
+        margin_per_unit = (
+            _safe_float(raw_max_loss)
+            or _safe_float(opportunity.get("Net Debit"))
+            or _safe_float(opportunity.get("Credit"))
+            or 0.0
+        )
     estimated_margin = round(margin_per_unit * config.lot_size, 2)
     liquidity_pass = (
         float(opportunity["Avg OI"]) >= config.min_open_interest
@@ -1002,7 +1019,7 @@ def analyze_option_selling_strategies(
         candidates.extend(call_spreads[: max(1, top_n)])
 
     candidates.sort(key=lambda item: item["Score"], reverse=True)
-    return candidates[: max(1, top_n)]
+    return candidates
 
 
 def write_results(results: list[dict[str, Any]], output_path: Path) -> None:

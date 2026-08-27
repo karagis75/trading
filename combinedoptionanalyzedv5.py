@@ -437,11 +437,29 @@ def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
 
 
 def bid_price(option: dict[str, Any]) -> float:
-    return float(option.get("bidprice") or option.get("buyPrice1") or 0)
+    return float(option.get("bidprice") or option.get("bidPrice") or option.get("buyPrice1") or 0)
 
 
 def ask_price(option: dict[str, Any]) -> float:
     return float(option.get("askPrice") or option.get("sellPrice1") or 0)
+
+
+def _take_top(items: list[dict[str, Any]], n: int) -> list[dict[str, Any]]:
+    ranked = sorted(items, key=lambda x: x["Score"], reverse=True)
+    return ranked[: max(1, n)]
+
+
+def _matched_atm_legs(
+    calls: list[dict[str, Any]], puts: list[dict[str, Any]], underlying_price: float
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Pick a shared ATM strike that exists on both the call and put side."""
+    call_by_strike = {float(o["strikePrice"]): o for o in calls}
+    put_by_strike = {float(o["strikePrice"]): o for o in puts}
+    common = call_by_strike.keys() & put_by_strike.keys()
+    if not common:
+        return None, None
+    atm_strike = min(common, key=lambda strike: abs(strike - underlying_price))
+    return call_by_strike[atm_strike], put_by_strike[atm_strike]
 
 
 def traded_volume(option: dict[str, Any]) -> int:
@@ -1188,29 +1206,28 @@ def analyze_symbol(
         if strategy_mode in ("buying", "both"):
             # Bull Call Spread: buy lower ATM call, sell higher OTM call
             bull_calls = sorted(calls, key=lambda o: float(o["strikePrice"]))
-            candidates.extend(_build_debit_spreads(sym, "Bull Call Spread", context, config, india_vix, iv, bull_calls))
+            candidates.extend(_take_top(_build_debit_spreads(sym, "Bull Call Spread", context, config, india_vix, iv, bull_calls), top_n))
 
         if strategy_mode in ("selling", "both"):
             # Bull Put Credit Spread: sell OTM put, buy further OTM put
-            candidates.extend(_build_put_credit_spreads(sym, context, config, india_vix, iv, puts))
+            candidates.extend(_take_top(_build_put_credit_spreads(sym, context, config, india_vix, iv, puts), top_n))
 
     # ── BEARISH ──────────────────────────────────────────────────────────────
     if trend in ("bearish", "neutral", "unknown"):
         if strategy_mode in ("buying", "both"):
             # Bear Put Spread: buy higher ATM put, sell lower OTM put
             bear_puts = sorted(puts, key=lambda o: float(o["strikePrice"]), reverse=True)
-            candidates.extend(_build_debit_spreads(sym, "Bear Put Spread", context, config, india_vix, iv, bear_puts))
+            candidates.extend(_take_top(_build_debit_spreads(sym, "Bear Put Spread", context, config, india_vix, iv, bear_puts), top_n))
 
         if strategy_mode in ("selling", "both"):
             # Bear Call Credit Spread: sell OTM call, buy further OTM call
-            candidates.extend(_build_call_credit_spreads(sym, context, config, india_vix, iv, calls))
+            candidates.extend(_take_top(_build_call_credit_spreads(sym, context, config, india_vix, iv, calls), top_n))
 
     # ── SIDEWAYS ─────────────────────────────────────────────────────────────
     if trend in ("sideways", "neutral", "unknown"):
         # ATM options for straddle/strangle
         if calls and puts:
-            atm_call = min(calls, key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
-            atm_put  = min(puts,  key=lambda o: abs(float(o["strikePrice"]) - context.underlying_price))
+            atm_call, atm_put = _matched_atm_legs(calls, puts, context.underlying_price)
 
             if strategy_mode in ("buying", "both"):
                 # Long Strangle: buy OTM call + OTM put
@@ -1227,19 +1244,19 @@ def analyze_symbol(
                             opp = add_validation_fields(opp, context, config)
                         if opp:
                             strangle_pool.append(opp)
-                strangle_pool.sort(key=lambda x: x["Score"], reverse=True)
-                candidates.extend(strangle_pool[:max(1, top_n)])
+                candidates.extend(_take_top(strangle_pool, top_n))
 
             if strategy_mode in ("selling", "both"):
                 # Short Straddle: sell ATM call + ATM put
-                opp = build_short_straddle_opportunity(
-                    sym, context.pcr, india_vix, context.underlying_price,
-                    atm_call, atm_put, context.max_open_interest, context.expiry, iv,
-                )
-                if opp:
-                    opp = add_validation_fields(opp, context, config)
-                if opp:
-                    candidates.append(opp)
+                if atm_call and atm_put:
+                    opp = build_short_straddle_opportunity(
+                        sym, context.pcr, india_vix, context.underlying_price,
+                        atm_call, atm_put, context.max_open_interest, context.expiry, iv,
+                    )
+                    if opp:
+                        opp = add_validation_fields(opp, context, config)
+                    if opp:
+                        candidates.append(opp)
 
                 # Iron Condor: combine best put credit + best call credit spread
                 put_spreads  = _build_put_credit_spreads(sym, context, config, india_vix, iv, puts)
@@ -1250,7 +1267,7 @@ def analyze_symbol(
                     candidates.extend(_best_iron_condors(sym, context, config, india_vix, put_spreads, call_spreads, top_n))
 
     candidates.sort(key=lambda x: x["Score"], reverse=True)
-    return candidates[:max(1, top_n)]
+    return candidates
 
 
 # Keep old names as thin wrappers so any external code referencing them still works
