@@ -1,10 +1,19 @@
+import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 
 import numpy as np
 import pandas as pd
 
 import nifty500_xy_intersect as scanner
+
+
+def make_excel_bytes(rows: list[dict[str, str]]) -> bytes:
+    buffer = io.BytesIO()
+    pd.DataFrame(rows).to_excel(buffer, index=False)
+    return buffer.getvalue()
 
 
 def make_history(rows: int = 60) -> pd.DataFrame:
@@ -41,18 +50,83 @@ def make_evaluation_frame() -> pd.DataFrame:
 
 
 class Nifty500IntersectTests(unittest.TestCase):
-    def test_nse_json_response_is_parsed_and_namespaced(self) -> None:
-        response = Mock()
-        response.json.return_value = {"data": [{"symbol": "TCS"}, {"symbol": "INFY.NS"}]}
-        response.text = ""
-        response.raise_for_status.return_value = None
-        session = Mock()
-        session.get.side_effect = [Mock(), response]
+    def test_github_blob_url_is_converted_to_raw(self) -> None:
+        raw_url = scanner.to_raw_github_url(scanner.DEFAULT_STOCK_LIST_URL)
 
-        tickers = scanner.get_nifty500_tickers(session)
+        self.assertEqual(
+            raw_url,
+            "https://raw.githubusercontent.com/karagis75/trading/main/"
+            "NSE_Stocks_List_20251230_1617.xlsx",
+        )
+
+    def test_excel_ticker_column_is_parsed_and_namespaced(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "stocks.xlsx"
+            pd.DataFrame(
+                {
+                    "Company Name": ["TCS", "Infosys"],
+                    "Ticker": ["TCS", "INFY.NS"],
+                }
+            ).to_excel(path, index=False)
+
+            tickers = scanner.get_nifty500_tickers(path)
 
         self.assertEqual(tickers, ["TCS.NS", "INFY.NS"])
-        self.assertEqual(session.get.call_count, 2)
+
+    def test_excel_symbol_column_is_used_when_ticker_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "stocks.xlsx"
+            pd.DataFrame({"Symbol": ["RELIANCE", "HDFCBANK.NS"]}).to_excel(
+                path, index=False
+            )
+
+            tickers = scanner.get_nifty500_tickers(path)
+
+        self.assertEqual(tickers, ["RELIANCE.NS", "HDFCBANK.NS"])
+
+    def test_github_excel_is_downloaded_from_raw_url(self) -> None:
+        response = Mock()
+        response.content = make_excel_bytes(
+            [{"Ticker": "TCS"}, {"Ticker": "INFY.NS"}]
+        )
+        response.raise_for_status.return_value = None
+        session = Mock()
+        session.get.return_value = response
+
+        tickers = scanner.get_nifty500_tickers(
+            scanner.DEFAULT_STOCK_LIST_URL,
+            session=session,
+        )
+
+        self.assertEqual(tickers, ["TCS.NS", "INFY.NS"])
+        session.get.assert_called_once()
+        requested_url = session.get.call_args.args[0]
+        self.assertEqual(
+            requested_url,
+            scanner.to_raw_github_url(scanner.DEFAULT_STOCK_LIST_URL),
+        )
+        self.assertNotIn("nseindia.com", requested_url)
+
+    def test_remote_failure_falls_back_to_local_workbook(self) -> None:
+        session = Mock()
+        session.get.side_effect = RuntimeError("network blocked")
+
+        tickers = scanner.get_nifty500_tickers(
+            scanner.DEFAULT_STOCK_LIST_URL,
+            session=session,
+        )
+
+        self.assertGreater(len(tickers), 400)
+        self.assertIn("RELIANCE.NS", tickers)
+        session.get.assert_called_once()
+
+    def test_repo_excel_workbook_loads_namespaced_tickers(self) -> None:
+        tickers = scanner.get_nifty500_tickers(scanner.LOCAL_STOCK_LIST)
+
+        self.assertGreater(len(tickers), 400)
+        self.assertTrue(all(ticker.endswith(".NS") for ticker in tickers))
+        self.assertIn("RELIANCE.NS", tickers)
+        self.assertIn("TCS.NS", tickers)
 
     def test_indicator_calculation_does_not_mutate_input(self) -> None:
         source = make_history()

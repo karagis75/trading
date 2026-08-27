@@ -1,8 +1,9 @@
 """NIFTY 500 X/Y intersect screener.
 
 The Y axis contains the entry setups and the X axis contains the mapped
-profit, trailing, and ATR-based exits.  Market data is fetched from NSE and
-Yahoo Finance when the module is run as a script.
+profit, trailing, and ATR-based exits.  Price data is fetched from Yahoo
+Finance.  The stock universe is loaded from the GitHub Excel list (or a
+local --input path), not from NSE.
 """
 
 from __future__ import annotations
@@ -20,12 +21,13 @@ import requests
 import yfinance as yf
 
 
-NSE_HOME_URL = "https://www.nseindia.com"
-NIFTY_500_API_URL = "https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%20500"
-NSE_HEADERS = {
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": NSE_HOME_URL + "/",
+DEFAULT_STOCK_LIST_URL = (
+    "https://github.com/karagis75/trading/blob/main/"
+    "NSE_Stocks_List_20251230_1617.xlsx"
+)
+LOCAL_STOCK_LIST = Path(__file__).resolve().parent / "NSE_Stocks_List_20251230_1617.xlsx"
+HTTP_HEADERS = {
+    "Accept": "*/*",
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -63,56 +65,109 @@ class IntersectScannerConfig:
         return max(self.slow_dma, self.atr_period * 2 + 1)
 
 
+def to_raw_github_url(source: str) -> str:
+    """Convert github.com blob URLs into raw.githubusercontent.com download URLs."""
+
+    if "github.com/" not in source or "/blob/" not in source:
+        return source
+
+    after_host = source.split("github.com/", 1)[1]
+    parts = after_host.split("/")
+    if len(parts) < 5 or parts[2] != "blob":
+        return source
+
+    user, repo, _blob, ref = parts[:4]
+    path = "/".join(parts[4:])
+    return f"https://raw.githubusercontent.com/{user}/{repo}/{ref}/{path}"
+
+
+def _namespace_symbols(symbols: list[str]) -> list[str]:
+    """Uppercase symbols and append .NS when a Yahoo suffix is missing."""
+
+    namespaced: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        cleaned = symbol.strip().upper()
+        if not cleaned or cleaned in {"NAN", "NONE"}:
+            continue
+        if not (cleaned.endswith(".NS") or "." in cleaned or cleaned.startswith("^")):
+            cleaned = f"{cleaned}.NS"
+        if cleaned not in seen:
+            seen.add(cleaned)
+            namespaced.append(cleaned)
+    return namespaced
+
+
+def _symbols_from_frame(frame: pd.DataFrame) -> list[str]:
+    column = next(
+        (
+            name
+            for name in ("Ticker", "Symbol", "ticker", "symbol")
+            if name in frame.columns
+        ),
+        None,
+    )
+    if column is None:
+        raise ValueError("Stock list has no Ticker or Symbol column")
+    return _namespace_symbols(frame[column].dropna().astype(str).tolist())
+
+
+def _load_workbook(
+    source: str,
+    session: requests.Session | None = None,
+) -> pd.DataFrame:
+    if source.startswith("http://") or source.startswith("https://"):
+        url = to_raw_github_url(source)
+        http = session or requests.Session()
+        response = http.get(url, headers=HTTP_HEADERS, timeout=30)
+        response.raise_for_status()
+        return pd.read_excel(io.BytesIO(response.content))
+
+    path = Path(source)
+    if not path.exists():
+        raise FileNotFoundError(f"Stock list not found: {path}")
+    return pd.read_excel(path)
+
+
 def get_nifty500_tickers(
+    source: str | Path | None = None,
     session: requests.Session | None = None,
 ) -> list[str]:
-    """Return current NIFTY 500 symbols from NSE's official API.
+    """Return NIFTY 500 symbols from the GitHub Excel list (or a local file).
 
-    NSE generally requires a homepage request before its API will return
-    data. The parser also accepts a CSV response, which keeps this function
-    compatible with official list-download responses and straightforward to
-    test.
+    The default source is the repository workbook:
+    https://github.com/karagis75/trading/blob/main/NSE_Stocks_List_20251230_1617.xlsx
+
+    GitHub blob URLs are converted to raw download URLs. If the remote
+    download fails, the local copy next to this script is used when present.
     """
 
-    http = session or requests.Session()
-    try:
-        http.get(NSE_HOME_URL, headers=NSE_HEADERS, timeout=30)
-        response = http.get(NIFTY_500_API_URL, headers=NSE_HEADERS, timeout=30)
-        response.raise_for_status()
+    requested = str(source) if source is not None else DEFAULT_STOCK_LIST_URL
+    candidates = [requested]
+    default_raw = to_raw_github_url(DEFAULT_STOCK_LIST_URL)
+    uses_default_list = (
+        requested == DEFAULT_STOCK_LIST_URL
+        or to_raw_github_url(requested) == default_raw
+        or Path(requested).resolve() == LOCAL_STOCK_LIST
+    )
+    local_path = str(LOCAL_STOCK_LIST)
+    if uses_default_list and LOCAL_STOCK_LIST.exists() and local_path not in candidates:
+        candidates.append(local_path)
 
-        symbols: list[str]
+    last_error: Exception | None = None
+    for candidate in candidates:
         try:
-            payload = response.json()
-        except (ValueError, AttributeError):
-            payload = None
+            tickers = _symbols_from_frame(_load_workbook(candidate, session))
+            if not tickers:
+                raise ValueError(f"Stock list is empty: {candidate}")
+            return tickers
+        except Exception as exc:
+            last_error = exc
+            logging.warning("Error loading stock list from %s: %s", candidate, exc)
 
-        if isinstance(payload, dict) and isinstance(payload.get("data"), list):
-            symbols = [
-                str(item["symbol"]).strip().upper()
-                for item in payload["data"]
-                if isinstance(item, dict) and item.get("symbol")
-            ]
-        else:
-            csv_df = pd.read_csv(io.StringIO(response.text))
-            symbol_column = next(
-                (column for column in ("Symbol", "symbol") if column in csv_df.columns),
-                None,
-            )
-            if symbol_column is None:
-                raise ValueError("NSE response has no Symbol column")
-            symbols = (
-                csv_df[symbol_column]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .str.upper()
-                .tolist()
-            )
-
-        return [symbol if symbol.endswith(".NS") else f"{symbol}.NS" for symbol in symbols]
-    except Exception as exc:
-        logging.warning("Error fetching NIFTY 500 list from NSE: %s", exc)
-        return []
+    if last_error is not None:
+        logging.warning("Could not load NIFTY 500 ticker list: %s", last_error)
+    return []
 
 
 def calculate_indicators(
@@ -326,16 +381,26 @@ def main() -> None:
         description="Scan NIFTY 500 stocks for X/Y intersect entry and exit signals."
     )
     parser.add_argument(
+        "--input",
+        default=DEFAULT_STOCK_LIST_URL,
+        help=(
+            "Excel workbook or GitHub URL with a Ticker/Symbol column. "
+            "Defaults to the repository NSE stocks list."
+        ),
+    )
+    parser.add_argument(
         "--output",
         default="nifty500_xy_matrix_signals.csv",
         help="CSV path for the signal matrix.",
     )
     args = parser.parse_args()
 
-    tickers = get_nifty500_tickers()
+    tickers = get_nifty500_tickers(args.input)
     if not tickers:
-        print("Could not fetch the NIFTY 500 ticker list.")
+        print("Could not load the NIFTY 500 ticker list from the Excel source.")
         return
+
+    print(f"Loaded {len(tickers)} symbols from {args.input}")
 
     signals = screen_stocks_with_intersect(tickers)
     print("\n=== NIFTY 500 FACTOR MATRIX INTERSECT RESULTS ===")
