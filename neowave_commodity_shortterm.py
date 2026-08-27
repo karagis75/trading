@@ -81,6 +81,8 @@ def check_bearish_regime_50ema(frame: pd.DataFrame) -> bool:
 
 
 def automatic_pivot_width(frame: pd.DataFrame) -> int:
+    if frame.empty:
+        return 5
     close = frame["Close"].astype(float)
     previous_close = close.shift(1)
     true_range = pd.concat([
@@ -88,7 +90,11 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
         (frame["High"] - previous_close).abs(),
         (frame["Low"] - previous_close).abs(),
     ], axis=1).max(axis=1)
-    atr_percent = float((true_range.rolling(14).mean() / close).iloc[-1] * 100)
+    atr_percent = float(
+        (true_range.rolling(14, min_periods=1).mean() / close.replace(0, np.nan)).iloc[-1] * 100
+    )
+    if not np.isfinite(atr_percent):
+        atr_percent = 0.0
     history_component = len(frame) / 180
     volatility_component = atr_percent * 0.8
     return int(np.clip(round(4 + history_component + volatility_component), 5, 18))
@@ -119,29 +125,13 @@ def confirmed_pivots(frame: pd.DataFrame, width: int) -> list[dict]:
 
 
 def latest_impulse(pivots: list[dict], bearish: bool) -> tuple[dict, dict] | None:
-    """Find the true absolute macro structural anchors from the recent active window period."""
-    shown_pivots = pivots[-8:]  # Filter to the recent active segment window
-    if len(shown_pivots) < 2:
-        return None
-        
-    high_pivots = [p for p in shown_pivots if p["kind"] == "H"]
-    low_pivots = [p for p in shown_pivots if p["kind"] == "L"]
-    
-    if not high_pivots or not low_pivots:
-        return None
-        
-    if bearish:
-        # Macro Bearish: Find absolute highest high and absolute lowest low in the wave period
-        macro_high = max(high_pivots, key=lambda x: x["price"])
-        macro_low = min(low_pivots, key=lambda x: x["price"])
-        if macro_high["index"] < macro_low["index"]:
-            return macro_high, macro_low
-    else:
-        # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period
-        macro_low = min(low_pivots, key=lambda x: x["price"])
-        macro_high = max(high_pivots, key=lambda x: x["price"])
-        return macro_low, macro_high
-        
+    """Return the newest confirmed, chronological impulse in the requested direction."""
+    for start, end in zip(reversed(pivots[:-1]), reversed(pivots[1:])):
+        if bearish:
+            if start["kind"] == "H" and end["kind"] == "L" and end["price"] < start["price"]:
+                return start, end
+        elif start["kind"] == "L" and end["kind"] == "H" and end["price"] > start["price"]:
+            return start, end
     return None
 
 

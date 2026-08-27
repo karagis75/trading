@@ -26,9 +26,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toYYYYMMDDStr(dateObj) {
     return (
-        String(dateObj.getFullYear()) +
-        String(dateObj.getMonth() + 1).padStart(2, '0') +
-        String(dateObj.getDate()).padStart(2, '0')
+        String(dateObj.getUTCFullYear()) +
+        String(dateObj.getUTCMonth() + 1).padStart(2, '0') +
+        String(dateObj.getUTCDate()).padStart(2, '0')
     );
 }
 
@@ -94,8 +94,9 @@ async function fetchIndexHistoryFromYahoo(symbol) {
         if (!chart || !chart.timestamp) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
+        const indicators = chart.indicators?.quote?.[0];
+        if (!indicators) return [];
+        const adjClose = chart.indicators.adjclose?.[0]?.adjclose;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
@@ -109,7 +110,7 @@ async function fetchIndexHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], 
+                close:  adjClose?.[i] ?? indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -226,7 +227,7 @@ function analyzeFibPinball(symbol, rows) {
 
         if (curPrice < w2c.price) {
             // Drop validation
-        } else if (curPrice <= w1c.high) {
+        } else if (curPrice <= w1c.price) {
             if (daysSinceW2 <= 30 && curPrice > w2c.price) {
                 waveLabel       = 'Early Wave 1 of 3';
                 waveConfidence  = 55;
@@ -334,7 +335,9 @@ function detectEarlyWave1(cleanSymbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.01 || gainFromW0 > 0.40) return null; 
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorWindow = useRows.slice(preW0Start, w0Idx);
+    if (priorWindow.length === 0) return null;
+    const priorLow   = Math.min(...priorWindow.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -418,9 +421,9 @@ async function main() {
     
     console.log('\nData pipeline parsing execution complete.');
 
-    const wave1 = allResults.filter(r => r['Wave Position'].includes('Wave 1'));
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5') || r['Wave Position'].includes('Super Extended'));
+    const wave1 = allResults.filter(r => isWaveBucket(r['Wave Position'], 1));
+    const wave3 = allResults.filter(r => isWaveBucket(r['Wave Position'], 3));
+    const wave5 = allResults.filter(r => isWaveBucket(r['Wave Position'], 5));
 
     allResults.sort((a, b) => {
         const order = { 
@@ -470,4 +473,17 @@ async function main() {
     console.log(`\nGenerated CSV reports stored in: ${OUT_DIR}`);
 }
 
-main().catch(err => { console.error('Fatal Script Failure:', err); process.exit(1); });
+function isWaveBucket(position, bucket) {
+    const buckets = {
+        1: new Set(['Wave 1', 'Wave 1 of 3', 'Early Wave 1 of 3']),
+        3: new Set(['Wave 3', 'Wave 3 Extended']),
+        5: new Set(['Wave 5', 'Wave 5 Extended', 'Super Extended'])
+    };
+    return buckets[bucket]?.has(position) ?? false;
+}
+
+if (require.main === module) {
+    main().catch(err => { console.error('Fatal Script Failure:', err); process.exit(1); });
+}
+
+module.exports = { analyzeFibPinball, detectEarlyWave1, isWaveBucket, toYYYYMMDDStr };

@@ -83,6 +83,8 @@ def check_bearish_regime(symbol: str) -> bool:
 
 
 def automatic_pivot_width(frame: pd.DataFrame) -> int:
+    if frame.empty:
+        return 5
     close = frame["Close"].astype(float)
     previous_close = close.shift(1)
     true_range = pd.concat([
@@ -90,7 +92,11 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
         (frame["High"] - previous_close).abs(),
         (frame["Low"] - previous_close).abs(),
     ], axis=1).max(axis=1)
-    atr_percent = float((true_range.rolling(14).mean() / close).iloc[-1] * 100)
+    atr_percent = float(
+        (true_range.rolling(14, min_periods=1).mean() / close.replace(0, np.nan)).iloc[-1] * 100
+    )
+    if not np.isfinite(atr_percent):
+        atr_percent = 0.0
     history_component = len(frame) / 180
     volatility_component = atr_percent * 0.8
     return int(np.clip(round(4 + history_component + volatility_component), 5, 18))
@@ -189,6 +195,7 @@ def plot_chart(frame: pd.DataFrame, symbol: str, pivot_width: int, is_bearish: b
                         textcoords="offset points", ha="center", color="white", fontsize=9,
                         bbox={"boxstyle": "round,pad=0.18", "fc": "#7c3aed", "ec": "none", "alpha": 0.9})
 
+    mode_prefix = "Bear" if is_bearish else "Bull"
     fib = calculate_fib_levels(pivots, is_bearish)
     if fib:
         anchors, retracements, targets = fib
@@ -199,8 +206,6 @@ def plot_chart(frame: pd.DataFrame, symbol: str, pivot_width: int, is_bearish: b
         ret_color = "#f472b6" if is_bearish else "#60a5fa"      # Pinkish support/resistance vs blue
         target_color = "#ef4444" if is_bearish else "#22c55e"   # Red downside target vs green upside
         invalid_color = "#22c55e" if is_bearish else "#ef4444"  # Green upper invalidation vs red lower invalidation
-        
-        mode_prefix = "Bear" if is_bearish else "Bull"
         
         for ratio, price in retracements.items():
             ax.hlines(price, start_date, frame.index[-1], colors=ret_color, linestyles="--", lw=0.85, alpha=0.8)

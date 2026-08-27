@@ -28,9 +28,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toYYYYMMDDStr(dateObj) {
     return (
-        String(dateObj.getFullYear()) +
-        String(dateObj.getMonth() + 1).padStart(2, '0') +
-        String(dateObj.getDate()).padStart(2, '0')
+        String(dateObj.getUTCFullYear()) +
+        String(dateObj.getUTCMonth() + 1).padStart(2, '0') +
+        String(dateObj.getUTCDate()).padStart(2, '0')
     );
 }
 
@@ -93,13 +93,15 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         if (!chart || !chart.timestamp) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
+        const indicators = chart.indicators?.quote?.[0];
+        if (!indicators) return [];
+        const adjClose = chart.indicators.adjclose?.[0]?.adjclose;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open?.[i] == null || indicators.close?.[i] == null ||
+                indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -110,7 +112,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  adjClose?.[i] ?? indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -360,7 +362,9 @@ function detectEarlyWave1(symbol, rows, useRows, curPrice, curDate) {
     if (gainFromW0 < 0.05 || gainFromW0 > 1.0) return null;
 
     const preW0Start = Math.max(0, w0Idx - 20);
-    const priorLow   = Math.min(...useRows.slice(preW0Start, w0Idx).map(r => r.low));
+    const priorWindow = useRows.slice(preW0Start, w0Idx);
+    if (priorWindow.length === 0) return null;
+    const priorLow   = Math.min(...priorWindow.map(r => r.low));
     if (w0Low >= priorLow) return null; 
     
     const slice10 = useRows.slice(-10);
@@ -451,9 +455,9 @@ async function main() {
     }
 
     // 4. Categorise and sort
-    const wave1 = allResults.filter(r => r['Wave Position'].includes('Wave 1'));
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5') || r['Wave Position'].includes('Super Extended'));
+    const wave1 = allResults.filter(r => isWaveBucket(r['Wave Position'], 1));
+    const wave3 = allResults.filter(r => isWaveBucket(r['Wave Position'], 3));
+    const wave5 = allResults.filter(r => isWaveBucket(r['Wave Position'], 5));
 
     const byConfidence = (a, b) => b.Confidence - a.Confidence || a.Symbol.localeCompare(b.Symbol);
     wave1.sort(byConfidence);
@@ -529,6 +533,15 @@ async function main() {
     console.log(`  ${outWave1}`);
     console.log(`  ${outWave3}`);
     console.log(`  ${outWave5}`);
+}
+
+function isWaveBucket(position, bucket) {
+    const buckets = {
+        1: new Set(['Wave 1', 'Wave 1 of 3', 'Early Wave 1 of 3']),
+        3: new Set(['Wave 3', 'Wave 3 Extended']),
+        5: new Set(['Wave 5', 'Wave 5 Extended', 'Super Extended'])
+    };
+    return buckets[bucket]?.has(position) ?? false;
 }
 
 main().catch(err => { console.error('Fatal:', err); process.exit(1); });

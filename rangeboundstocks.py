@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from trading_utils import normalize_nse_ticker
+
 
 @dataclass(frozen=True)
 class StrangleScannerConfig:
@@ -70,10 +72,14 @@ def evaluate_strangle_setup(symbol: str, df: pd.DataFrame, config: StrangleScann
     curr = df.iloc[-1]
 
     # Condition 1: ADX flipped below 15 within the last 1-3 days
-    adx_below_threshold = (recent_df["ADX"] < config.adx_threshold).any()
+    adx_window = df["ADX"].iloc[-(config.adx_lookback + 1):]
+    adx_below_threshold = any(
+        previous >= config.adx_threshold and current < config.adx_threshold
+        for previous, current in zip(adx_window.iloc[:-1], adx_window.iloc[1:])
+    )
 
     # Condition 2: CCI oscillating tightly between -50 and +50
-    cci_tight = -config.cci_bound <= curr["CCI"] <= config.cci_bound
+    cci_tight = recent_df["CCI"].between(-config.cci_bound, config.cci_bound).all()
 
     # Condition 3: EMA Braid (9, 18, 50 converging tightly together)
     ema_min = min(curr["EMA9"], curr["EMA18"], curr["EMA50"])
@@ -109,7 +115,7 @@ def evaluate_strangle_setup(symbol: str, df: pd.DataFrame, config: StrangleScann
 
 def analyze_symbol(symbol: str, config: StrangleScannerConfig) -> dict[str, Any] | None:
     """Fetches stock data and evaluates strangle setup criteria."""
-    formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
+    formatted_ticker = normalize_nse_ticker(symbol)
     try:
         ticker = yf.Ticker(formatted_ticker)
         df = ticker.history(period=config.lookback_period, interval="1d")
@@ -154,6 +160,7 @@ def main() -> None:
         return
 
     output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df_results = pd.DataFrame(results).sort_values(by=["ADX (14)", "EMA Braid Spread %"], ascending=True)
 
     if output_path.suffix.lower() == ".csv":

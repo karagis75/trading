@@ -619,13 +619,17 @@ def add_validation_fields(
             or 0.0
         )
     estimated_margin = round(margin_per_unit * config.lot_size, 2)
-    spread_width = opportunity.get("Spread Width") or 0
+    spread_width = _safe_float(opportunity.get("Spread Width"))
+    liquidity_basis = (
+        spread_width
+        or abs(_safe_float(opportunity.get("Credit")))
+        or abs(_safe_float(opportunity.get("Net Debit")))
+    )
     liquidity_pass = (
         float(opportunity["Avg OI"]) >= config.min_open_interest
-        and (
-            float(spread_width) <= 0
-            or float(opportunity["Bid-Ask Spread"]) <= float(spread_width) * config.max_bid_ask_spread_pct
-        )
+        and liquidity_basis > 0
+        and float(opportunity["Bid-Ask Spread"])
+        <= liquidity_basis * config.max_bid_ask_spread_pct
     )
     trend_pass = trend_allows_strategy(strategy, context.trend)
     event_pass = context.event_risk not in ("yes", "true", "high", "blocked", "avoid")
@@ -865,6 +869,8 @@ def build_short_iron_butterfly_opportunity(
     max_open_interest: int, expiry: str, iv_decimal: float
 ) -> dict[str, Any] | None:
     atm_strike = float(atm_call["strikePrice"])
+    if float(atm_put["strikePrice"]) != atm_strike:
+        return None
     otm_call_strike = float(otm_call["strikePrice"])
     otm_put_strike = float(otm_put["strikePrice"])
 

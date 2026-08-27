@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+from trading_utils import normalize_nse_ticker
+
 
 @dataclass(frozen=True)
 class BullishScannerConfig:
@@ -116,8 +118,7 @@ def evaluate_bullish_bias(symbol: str, df: pd.DataFrame, config: BullishScannerC
 
 def analyze_symbol(symbol: str, config: BullishScannerConfig) -> dict[str, Any] | None:
     """Fetches stock data using yfinance and runs indicator evaluation."""
-    # Ensure ticker has appropriate extension for NSE if not provided
-    formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
+    formatted_ticker = normalize_nse_ticker(symbol)
     try:
         ticker = yf.Ticker(formatted_ticker)
         df = ticker.history(period=config.lookback_period, interval="1d")
@@ -162,6 +163,7 @@ def main() -> None:
         return
 
     output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     df_results = pd.DataFrame(results).sort_values(by=["ADX", "CCI"], ascending=False)
     
     if output_path.suffix.lower() == ".csv":

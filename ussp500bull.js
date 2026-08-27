@@ -27,9 +27,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 function toYYYYMMDDStr(dateObj) {
     return (
-        String(dateObj.getFullYear()) +
-        String(dateObj.getMonth() + 1).padStart(2, '0') +
-        String(dateObj.getDate()).padStart(2, '0')
+        String(dateObj.getUTCFullYear()) +
+        String(dateObj.getUTCMonth() + 1).padStart(2, '0') +
+        String(dateObj.getUTCDate()).padStart(2, '0')
     );
 }
 
@@ -37,7 +37,7 @@ function toYYYYMMDDStr(dateObj) {
 
 function downloadYahooData(symbol, period1, period2) {
     // Modified for US markets: Use native symbols directly without Indian market extensions (.NS)
-    const yahooSymbol = symbol.trim().toUpperCase();
+    const yahooSymbol = encodeURIComponent(symbol.trim().toUpperCase());
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?period1=${period1}&period2=${period2}&interval=1d&includeTimestamps=true`;
 
     return new Promise((resolve, reject) => {
@@ -92,13 +92,15 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
         if (!chart || !chart.timestamp) return [];
 
         const timestamps = chart.timestamp;
-        const indicators = chart.indicators.quote[0];
-        const adjClose = chart.indicators.adjclose?.[0]?.adjclose || indicators.close;
+        const indicators = chart.indicators?.quote?.[0];
+        if (!indicators) return [];
+        const adjClose = chart.indicators.adjclose?.[0]?.adjclose;
 
         const parsedRows = [];
         for (let i = 0; i < timestamps.length; i++) {
             // Filter out any days missing critical price points
-            if (indicators.open[i] == null || indicators.close[i] == null) continue;
+            if (indicators.open?.[i] == null || indicators.close?.[i] == null ||
+                indicators.high?.[i] == null || indicators.low?.[i] == null) continue;
 
             const d = new Date(timestamps[i] * 1000);
             
@@ -109,7 +111,7 @@ async function fetchSymbolHistoryFromYahoo(symbol) {
                 open:   indicators.open[i],
                 high:   indicators.high[i],
                 low:    indicators.low[i],
-                close:  adjClose[i], // Uses corporate action adjusted closes for accurate Fib retracements
+                close:  adjClose?.[i] ?? indicators.close[i],
                 volume: indicators.volume[i] || 0
             });
         }
@@ -378,8 +380,10 @@ async function main() {
 
     allResults.sort((a, b) => b.Confidence - a.Confidence);
 
-    const wave3 = allResults.filter(r => r['Wave Position'].includes('Wave 3'));
-    const wave5 = allResults.filter(r => r['Wave Position'].includes('Wave 5'));
+    const wave3 = allResults.filter(r => ['Wave 3', 'Wave 3 Extended'].includes(r['Wave Position']));
+    const wave5 = allResults.filter(r =>
+        ['Wave 5', 'Wave 5 Extended', 'Super Extended'].includes(r['Wave Position'])
+    );
 
     const csvHeaders = [
         'Symbol', 'Last Date', 'Wave Position', 'Confidence', 'Current Price',
@@ -425,4 +429,7 @@ async function main() {
     }
 }
 
-main().catch(err => console.error('Critical Global Exception Triggered Error Pipeline Loop:', err));
+main().catch(err => {
+    console.error('Critical Global Exception Triggered Error Pipeline Loop:', err);
+    process.exitCode = 1;
+});
