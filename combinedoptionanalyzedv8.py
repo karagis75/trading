@@ -151,11 +151,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     sma_tp14 = tp.rolling(window=14, min_periods=1).mean()
     mad14 = tp.rolling(window=14, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
-    df["CCI14"] = ((tp - sma_tp14) / (0.015 * mad14)).fillna(0)
+    df["CCI14"] = (tp - sma_tp14) / (0.015 * mad14)
 
     sma_tp20 = tp.rolling(window=20, min_periods=1).mean()
     mad20 = tp.rolling(window=20, min_periods=1).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
-    df["CCI20"] = ((tp - sma_tp20) / (0.015 * mad20)).fillna(0)
+    df["CCI20"] = (tp - sma_tp20) / (0.015 * mad20)
 
     # Robust ADX (14)
     high_diff = df["High"].diff()
@@ -174,7 +174,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     
     di_sum = (pos_di + neg_di).replace(0, np.nan)
     dx = 100 * ((pos_di - neg_di).abs() / di_sum)
-    df["ADX"] = dx.rolling(window=14, min_periods=1).mean().fillna(0)
+    df["ADX"] = dx.rolling(window=14, min_periods=1).mean()
 
     # Fibonacci S1
     prev_high = df["High"].shift(1).fillna(df["High"])
@@ -1171,6 +1171,20 @@ def _build_debit_spreads(
     return results
 
 
+def _top_n_per_strategy(candidates: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
+    """Keep up to top_n scored candidates for each strategy type, then re-rank."""
+    keep = max(1, top_n)
+    by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for item in candidates:
+        by_strategy.setdefault(str(item.get("Strategy", "")), []).append(item)
+    ranked: list[dict[str, Any]] = []
+    for items in by_strategy.values():
+        items.sort(key=lambda x: x["Score"], reverse=True)
+        ranked.extend(items[:keep])
+    ranked.sort(key=lambda x: x["Score"], reverse=True)
+    return ranked
+
+
 def _best_iron_condors(
     symbol: str, context: MarketContext, config: ScannerConfig,
     india_vix: float, put_spreads: list[dict[str, Any]], call_spreads: list[dict[str, Any]],
@@ -1294,7 +1308,7 @@ def analyze_symbol(
                 candidates.extend(strangle_pool[:max(1, top_n)])
 
     candidates.sort(key=lambda x: x["Score"], reverse=True)
-    return candidates[:max(1, top_n)]
+    return _top_n_per_strategy(candidates, top_n)
 
 
 def write_results(results: list[dict[str, Any]], output_path: Path) -> None:

@@ -136,11 +136,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # CCI (14 & 20)
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma_tp14 = tp.rolling(window=14).mean()
-    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
     df["CCI14"] = (tp - sma_tp14) / (0.015 * mad14)
 
     sma_tp20 = tp.rolling(window=20).mean()
-    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
     df["CCI20"] = (tp - sma_tp20) / (0.015 * mad20)
 
     # ADX (14)
@@ -154,10 +154,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=14).mean()
+    atr = tr.rolling(window=14).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=14).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=14).mean() / atr)
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
     df["ADX"] = dx.rolling(window=14).mean()
 
     # Fibonacci S1
@@ -1123,6 +1124,20 @@ def _build_debit_spreads(
     return results
 
 
+def _top_n_per_strategy(candidates: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
+    """Keep up to top_n scored candidates for each strategy type, then re-rank."""
+    keep = max(1, top_n)
+    by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for item in candidates:
+        by_strategy.setdefault(str(item.get("Strategy", "")), []).append(item)
+    ranked: list[dict[str, Any]] = []
+    for items in by_strategy.values():
+        items.sort(key=lambda x: x["Score"], reverse=True)
+        ranked.extend(items[:keep])
+    ranked.sort(key=lambda x: x["Score"], reverse=True)
+    return ranked
+
+
 def _best_iron_condors(
     symbol: str, context: MarketContext, config: ScannerConfig,
     india_vix: float, put_spreads: list[dict[str, Any]], call_spreads: list[dict[str, Any]],
@@ -1250,7 +1265,7 @@ def analyze_symbol(
                     candidates.extend(_best_iron_condors(sym, context, config, india_vix, put_spreads, call_spreads, top_n))
 
     candidates.sort(key=lambda x: x["Score"], reverse=True)
-    return candidates[:max(1, top_n)]
+    return _top_n_per_strategy(candidates, top_n)
 
 
 # Keep old names as thin wrappers so any external code referencing them still works

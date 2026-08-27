@@ -130,14 +130,14 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
     df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
 
-    # CCI (14 & 20)
+    # CCI (14 & 20) — zero MAD would otherwise produce inf and false bullish triggers
     tp = (df["High"] + df["Low"] + df["Close"]) / 3
     sma_tp14 = tp.rolling(window=14).mean()
-    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    mad14 = tp.rolling(window=14).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
     df["CCI14"] = (tp - sma_tp14) / (0.015 * mad14)
 
     sma_tp20 = tp.rolling(window=20).mean()
-    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True)
+    mad20 = tp.rolling(window=20).apply(lambda x: np.abs(x - x.mean()).mean(), raw=True).replace(0, np.nan)
     df["CCI20"] = (tp - sma_tp20) / (0.015 * mad20)
 
     # ADX (14)
@@ -151,10 +151,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     tr3 = np.abs(df["Low"] - df["Close"].shift(1))
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
-    atr = tr.rolling(window=14).mean()
+    atr = tr.rolling(window=14).mean().replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=14).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=14).mean() / atr)
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
     df["ADX"] = dx.rolling(window=14).mean()
 
     # Fibonacci S1
@@ -520,9 +521,18 @@ def pcr_allows_strategy(strategy: str, bias: str) -> bool:
     return False
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def add_validation_fields(
-    opportunity: dict[str, Any], context: MarketContext, config: ScannerConfig
+    opportunity: dict[str, Any] | None, context: MarketContext, config: ScannerConfig
 ) -> dict[str, Any] | None:
+    if opportunity is None:
+        return None
     strategy = str(opportunity["Strategy"])
     bias = pcr_bias(context, config)
 
@@ -532,11 +542,25 @@ def add_validation_fields(
         return None  # Skip rest of heavy calculations if PCR fails in enforced mode
 
     # 2. Additional Checks
-    margin_per_unit = float(opportunity["Max Loss"])
+    # Max Loss can be "Unlimited" for undefined-risk strategies (e.g. short straddle).
+    raw_max_loss = opportunity.get("Max Loss")
+    if isinstance(raw_max_loss, str) and raw_max_loss.strip().lower() == "unlimited":
+        margin_per_unit = round(context.underlying_price * 0.20, 2)
+    else:
+        margin_per_unit = (
+            _safe_float(raw_max_loss)
+            or _safe_float(opportunity.get("Net Debit"))
+            or _safe_float(opportunity.get("Credit"))
+            or 0.0
+        )
     estimated_margin = round(margin_per_unit * config.lot_size, 2)
+    spread_width = opportunity.get("Spread Width") or 0
     liquidity_pass = (
         float(opportunity["Avg OI"]) >= config.min_open_interest
-        and float(opportunity["Bid-Ask Spread"]) <= float(opportunity["Spread Width"]) * config.max_bid_ask_spread_pct
+        and (
+            float(spread_width) <= 0
+            or float(opportunity["Bid-Ask Spread"]) <= float(spread_width) * config.max_bid_ask_spread_pct
+        )
     )
     trend_pass = trend_allows_strategy(strategy, context.trend)
     event_pass = context.event_risk not in ("yes", "true", "high", "blocked", "avoid")
@@ -843,6 +867,20 @@ def near_underlying(option: dict[str, Any], underlying_price: float, window_pct:
 # Core Analysis Routines
 # ---------------------------------------------------------------------------
 
+def _top_n_per_strategy(candidates: list[dict[str, Any]], top_n: int) -> list[dict[str, Any]]:
+    """Keep up to top_n scored candidates for each strategy type, then re-rank."""
+    keep = max(1, top_n)
+    by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for item in candidates:
+        by_strategy.setdefault(str(item.get("Strategy", "")), []).append(item)
+    ranked: list[dict[str, Any]] = []
+    for items in by_strategy.values():
+        items.sort(key=lambda x: x["Score"], reverse=True)
+        ranked.extend(items[:keep])
+    ranked.sort(key=lambda x: x["Score"], reverse=True)
+    return ranked
+
+
 def analyze_stock_spreads(
     session: Any, symbol: str, india_vix: float, config: ScannerConfig,
     chain_type: str = "auto", expiry: str | None = None,
@@ -1002,7 +1040,7 @@ def analyze_option_selling_strategies(
         candidates.extend(call_spreads[: max(1, top_n)])
 
     candidates.sort(key=lambda item: item["Score"], reverse=True)
-    return candidates[: max(1, top_n)]
+    return _top_n_per_strategy(candidates, top_n)
 
 
 def write_results(results: list[dict[str, Any]], output_path: Path) -> None:
