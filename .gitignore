@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Generated caches and scan outputs
+data/
+results/
+*_neowave.jpg
+*_neowave.jpeg
+*_neowave.png
+*_neowave.pdf
+Strangle_Candidate_Analysis.xlsx
