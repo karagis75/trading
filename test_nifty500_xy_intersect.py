@@ -79,6 +79,9 @@ class Nifty500IntersectTests(unittest.TestCase):
     def test_screen_uses_real_indicators_and_skips_failed_downloads(self) -> None:
         history = make_history()
         # The latest eight closes produce an upward 8-DMA over the 18-DMA.
+        history.loc[:, "Close"] = 100.0
+        history.loc[:, "High"] = 101.0
+        history.loc[:, "Low"] = 99.0
         history.iloc[-8:, history.columns.get_loc("Close")] = 100.3
         history.iloc[-8:, history.columns.get_loc("High")] = 101.3
         history.iloc[-8:, history.columns.get_loc("Low")] = 99.3
