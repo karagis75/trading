@@ -1,5 +1,6 @@
 import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -183,6 +184,91 @@ class CombinedScannerCliTests(unittest.TestCase):
 
         self.assertEqual(analyzed, ["SBIN", "IOC"])
         self.assertIn("Loaded 2 symbols from command line.", captured.getvalue())
+
+
+class ResilientNseSessionTests(unittest.TestCase):
+    """Covers request pacing, retry-on-exception, retry-on-5xx, and session
+    refresh added to fix NSE resetting HTTP/2 streams after ~30 rapid calls.
+    """
+
+    def test_get_retries_on_exception_and_succeeds(self) -> None:
+        ok_response = Mock(status_code=200)
+        raw = Mock()
+        raw.get.side_effect = [RuntimeError("stream reset"), ok_response]
+
+        with patch.object(scanner, "_build_raw_nse_session", return_value=raw):
+            session = scanner.ResilientNseSession(None, False, request_delay=0.0, max_retries=3)
+            with patch("time.sleep", return_value=None):
+                result = session.get("https://example.test/api")
+
+        self.assertIs(result, ok_response)
+        self.assertEqual(raw.get.call_count, 2)
+
+    def test_get_refreshes_session_after_failure(self) -> None:
+        ok_response = Mock(status_code=200)
+        failing_raw = Mock()
+        failing_raw.get.side_effect = RuntimeError("stream reset")
+        fresh_raw = Mock()
+        fresh_raw.get.return_value = ok_response
+
+        with patch.object(
+            scanner, "_build_raw_nse_session", side_effect=[failing_raw, fresh_raw]
+        ) as build_mock:
+            session = scanner.ResilientNseSession(None, False, request_delay=0.0, max_retries=3)
+            with patch("time.sleep", return_value=None):
+                result = session.get("https://example.test/api")
+
+        self.assertIs(result, ok_response)
+        self.assertEqual(build_mock.call_count, 2)
+
+    def test_get_retries_on_server_error_status(self) -> None:
+        busy_response = Mock(status_code=503)
+        ok_response = Mock(status_code=200)
+        raw = Mock()
+        raw.get.side_effect = [busy_response, ok_response]
+
+        with patch.object(scanner, "_build_raw_nse_session", return_value=raw):
+            session = scanner.ResilientNseSession(None, False, request_delay=0.0, max_retries=3)
+            with patch("time.sleep", return_value=None):
+                result = session.get("https://example.test/api")
+
+        self.assertIs(result, ok_response)
+        self.assertEqual(raw.get.call_count, 2)
+
+    def test_get_raises_after_exhausting_retries(self) -> None:
+        raw = Mock()
+        raw.get.side_effect = RuntimeError("stream reset")
+
+        with patch.object(scanner, "_build_raw_nse_session", return_value=raw):
+            session = scanner.ResilientNseSession(None, False, request_delay=0.0, max_retries=3)
+            with patch("time.sleep", return_value=None):
+                with self.assertRaises(RuntimeError):
+                    session.get("https://example.test/api")
+
+        self.assertEqual(raw.get.call_count, 3)
+
+    def test_get_paces_requests_with_delay(self) -> None:
+        raw = Mock()
+        raw.get.return_value = Mock(status_code=200)
+
+        with patch.object(scanner, "_build_raw_nse_session", return_value=raw):
+            session = scanner.ResilientNseSession(None, False, request_delay=5.0, max_retries=3)
+            session._last_request_at = time.monotonic()
+            with patch("time.sleep") as sleep_mock:
+                session.get("https://example.test/api")
+
+        sleep_mock.assert_called_once()
+        self.assertAlmostEqual(sleep_mock.call_args.args[0], 5.0, delta=0.1)
+
+    def test_get_json_survives_transient_failures_via_session_retry(self) -> None:
+        ok_response = Mock(status_code=200)
+        ok_response.json.return_value = {"records": {"data": []}}
+        session = Mock()
+        session.get.return_value = ok_response
+
+        result = scanner.get_json(session, "https://example.test/api")
+
+        self.assertEqual(result, {"records": {"data": []}})
 
 
 if __name__ == "__main__":
