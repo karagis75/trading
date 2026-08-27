@@ -206,6 +206,26 @@ def _read_first_html_table(path: Path) -> pd.DataFrame:
     return tables[0]
 
 
+def _has_ticker_column(df: pd.DataFrame) -> bool:
+    return any(column in df.columns for column in TICKER_COLUMNS)
+
+
+def _try_read_csv(path: Path) -> pd.DataFrame | None:
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return None
+    return frame if _has_ticker_column(frame) else None
+
+
+def _try_read_html(path: Path) -> pd.DataFrame | None:
+    try:
+        frame = _read_first_html_table(path)
+    except Exception:
+        return None
+    return frame if _has_ticker_column(frame) else None
+
+
 def read_input_table(path: str | Path, engine: str | None = None) -> pd.DataFrame:
     """Load a ticker universe from Excel, CSV, or HTML using an explicit or inferred engine."""
     source = Path(path)
@@ -234,29 +254,21 @@ def read_input_table(path: str | Path, engine: str | None = None) -> pd.DataFram
                     f"Failed to read '{source}' with engine '{excel_engine}': {exc}"
                 ) from exc
             # NSE-style .xls files are often HTML tables, not BIFF workbooks.
-            if suffix in {".xls", ".xlsx"} or excel_engine in {"xlrd", "openpyxl"}:
-                try:
-                    return _read_first_html_table(source)
-                except Exception:
-                    pass
-            try:
-                return pd.read_csv(source)
-            except Exception:
-                pass
+            fallback = _try_read_html(source)
+            if fallback is None:
+                fallback = _try_read_csv(source)
+            if fallback is not None:
+                return fallback
             raise ValueError(
                 "Excel file format cannot be determined, you must specify an engine "
                 f"manually. Failed to read '{source}' with engine '{excel_engine}': {exc}"
             ) from exc
 
-    try:
-        return pd.read_csv(source)
-    except Exception:
-        pass
-
-    try:
-        return _read_first_html_table(source)
-    except Exception:
-        pass
+    fallback = _try_read_csv(source)
+    if fallback is None:
+        fallback = _try_read_html(source)
+    if fallback is not None:
+        return fallback
 
     raise ValueError(
         "Excel file format cannot be determined, you must specify an engine manually. "
