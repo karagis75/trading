@@ -47,14 +47,34 @@
       ]
     },
     {
+      "name": "merge-option-candidates",
+      "enabled": true,
+      "script": "merge_ticker_candidates.py",
+      "args": [
+        "--sources",
+        "Bullish_Bias_Analysis.xlsx",
+        "Bearish_Momentum_Analysis.xlsx",
+        "Strangle_Candidate_Analysis.xlsx",
+        "--output",
+        "Option_Scan_Candidates.csv"
+      ]
+    },
+    {
       "name": "combined-option-v8",
-      "enabled": false,
+      "note": "If your local copy of this scanner is named combinedoptionanalyzedv8v2.py, update 'script' below to match.",
+      "enabled": true,
+      "skip_if_empty_input": true,
       "script": "combinedoptionanalyzedv8.py",
       "args": [
         "--input",
-        "ind_nifty500list.csv",
+        "Option_Scan_Candidates.csv",
         "--output",
-        "Combined_Option_Spread_Analysis.xlsx"
+        "Combined_Option_Spread_Analysis.xlsx",
+        "--browser-impersonation",
+        "--request-delay",
+        "1.5",
+        "--max-retries",
+        "6"
       ]
     }
   ]
