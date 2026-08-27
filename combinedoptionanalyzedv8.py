@@ -301,7 +301,7 @@ def detect_market_trend_detailed(
 
         # 3. Rangebound / Strangle Compression Setup
         recent_df = df.iloc[-3:]
-        adx_below_threshold = (recent_df["ADX"] < 15.0).any()
+        adx_below_threshold = bool(recent_df["ADX"].iloc[-1] < 15.0)
         cci_tight = pd.notna(curr["CCI14"]) and (-50.0 <= curr["CCI14"] <= 50.0)
 
         ema_min = min(curr["EMA9"], curr["EMA18"], curr["EMA50"])
@@ -448,7 +448,15 @@ def fetch_option_chain(
 
 
 def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
-    records = data.get("records", {}).get("data") or []
+    if not isinstance(data, dict):
+        return []
+    records_payload = data.get("records")
+    if not isinstance(records_payload, dict):
+        return []
+    records = records_payload.get("data")
+    if not isinstance(records, list):
+        return []
+    records = [row for row in records if isinstance(row, dict)]
     selected_expiry = data.get("_selected_expiry")
     if not selected_expiry:
         return records
@@ -465,8 +473,17 @@ def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         row for row in expiry_aware
         if row.get("expiryDate") == selected_expiry
-        or selected_expiry in (row.get("expiryDates") or [])
+        or selected_expiry in (
+            row.get("expiryDates")
+            if isinstance(row.get("expiryDates"), list)
+            else [row.get("expiryDates")]
+        )
     ]
+
+
+def _option_leg(row: dict[str, Any], side: str) -> dict[str, Any]:
+    leg = row.get(side)
+    return leg if isinstance(leg, dict) else {}
 
 
 def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
@@ -503,6 +520,8 @@ def bid_ask_spread_pct(option: dict[str, Any]) -> float:
 
 
 def option_is_tradeable(option: dict[str, Any], config: ScannerConfig) -> bool:
+    if not isinstance(option, dict):
+        return False
     bid = bid_price(option)
     ask = ask_price(option)
     return (
@@ -530,20 +549,20 @@ def build_market_context(
     if underlying_price <= 0:
         for row in records:
             underlying_price = _safe_float(
-                row.get("CE", {}).get("underlyingValue")
-                or row.get("PE", {}).get("underlyingValue")
+                _option_leg(row, "CE").get("underlyingValue")
+                or _option_leg(row, "PE").get("underlyingValue")
             )
             if underlying_price > 0:
                 break
     if underlying_price <= 0:
         return None
 
-    total_ce_oi = sum(_safe_int(row.get("CE", {}).get("openInterest")) for row in records)
-    total_pe_oi = sum(_safe_int(row.get("PE", {}).get("openInterest")) for row in records)
+    total_ce_oi = sum(_safe_int(_option_leg(row, "CE").get("openInterest")) for row in records)
+    total_pe_oi = sum(_safe_int(_option_leg(row, "PE").get("openInterest")) for row in records)
     pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 1.0
     max_open_interest = max(
-        [_safe_int(row.get("CE", {}).get("openInterest")) for row in records]
-        + [_safe_int(row.get("PE", {}).get("openInterest")) for row in records]
+        [_safe_int(_option_leg(row, "CE").get("openInterest")) for row in records]
+        + [_safe_int(_option_leg(row, "PE").get("openInterest")) for row in records]
         + [1]
     )
 
@@ -558,14 +577,14 @@ def build_market_context(
         records,
         key=lambda row: abs(
             _safe_float(
-                (row.get("CE") or {}).get("strikePrice")
-                or (row.get("PE") or {}).get("strikePrice")
+                _option_leg(row, "CE").get("strikePrice")
+                or _option_leg(row, "PE").get("strikePrice")
             )
             - underlying_price
         ),
     )
-    ce_iv = _safe_float((closest_row.get("CE") or {}).get("impliedVolatility"))
-    pe_iv = _safe_float((closest_row.get("PE") or {}).get("impliedVolatility"))
+    ce_iv = _safe_float(_option_leg(closest_row, "CE").get("impliedVolatility"))
+    pe_iv = _safe_float(_option_leg(closest_row, "PE").get("impliedVolatility"))
     ivs = [v for v in (ce_iv, pe_iv) if v > 0]
     if ivs:
         atm_iv = (sum(ivs) / len(ivs)) / 100.0
@@ -876,7 +895,8 @@ def build_credit_spread_opportunity(
     dte = days_to_expiry(expiry)
     iv_for_calc = iv_decimal if iv_decimal > 0 else max(0.01, india_vix / 100.0)
     option_type = "PUT" if "Put" in strategy else "CALL"
-    prob_of_profit = probability_otm(underlying_price, short_strike, iv_for_calc, dte, option_type)
+    breakeven = short_strike - credit if option_type == "PUT" else short_strike + credit
+    prob_of_profit = probability_otm(underlying_price, breakeven, iv_for_calc, dte, option_type)
 
     return {
         "Symbol": symbol,
@@ -895,6 +915,7 @@ def build_credit_spread_opportunity(
         "R:R Ratio": round(return_on_risk, 2),
         "Return on Risk": round(return_on_risk, 2),
         "Short Strike Distance %": round(short_distance_pct * 100, 2),
+        "Breakeven": round(breakeven, 2),
         "Expected Move %": round(expected_move_pct(iv_for_calc, expiry) * 100, 2),
         "Probability of Profit": round(prob_of_profit, 3),
         "Avg OI": round(avg_open_interest),
@@ -1151,6 +1172,7 @@ def _collect_tradeable(
         [
             row[key] for row in records
             if key in row
+            and isinstance(row[key], dict)
             and option_is_tradeable(row[key], config)
             and near_underlying(row[key], underlying_price, window_pct)
         ],
@@ -1241,7 +1263,7 @@ def _best_iron_condors(
     return condors[:max(1, top_n)]
 
 
-def analyze_symbol(
+def _analyze_symbol(
     session: Any, symbol: str, india_vix: float, config: ScannerConfig,
     chain_type: str = "auto", expiry: str | None = None,
     trend_map: dict[str, str] | None = None, event_map: dict[str, str] | None = None,
@@ -1343,6 +1365,24 @@ def analyze_symbol(
 
     candidates.sort(key=lambda x: x["Score"], reverse=True)
     return candidates[:max(1, top_n)]
+
+
+def analyze_symbol(
+    session: Any, symbol: str, india_vix: float, config: ScannerConfig,
+    chain_type: str = "auto", expiry: str | None = None,
+    trend_map: dict[str, str] | None = None, event_map: dict[str, str] | None = None,
+    top_n: int = 1,
+    strategy_mode: str = "both",
+) -> list[dict[str, Any]]:
+    """Analyze one symbol without allowing a malformed payload to stop a scan."""
+    try:
+        return _analyze_symbol(
+            session, symbol, india_vix, config, chain_type, expiry,
+            trend_map, event_map, top_n, strategy_mode,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        LOGGER.warning("Skipping malformed option data for %s: %s", symbol, exc)
+        return []
 
 
 def write_results(results: list[dict[str, Any]], output_path: Path) -> None:

@@ -37,7 +37,7 @@ def calculate_indicators(df: pd.DataFrame, config: StrangleScannerConfig) -> pd.
     mad = tp.rolling(window=config.cci_period).apply(
         lambda x: np.abs(x - x.mean()).mean(), raw=True
     )
-    df["CCI"] = (tp - sma_tp) / (0.015 * mad)
+    df["CCI"] = ((tp - sma_tp) / (0.015 * mad.replace(0, np.nan))).fillna(0)
 
     # 3. Average Directional Index (ADX)
     high_diff = df["High"].diff()
@@ -52,11 +52,13 @@ def calculate_indicators(df: pd.DataFrame, config: StrangleScannerConfig) -> pd.
     tr = pd.DataFrame({"tr1": tr1, "tr2": tr2, "tr3": tr3}).max(axis=1)
 
     atr = tr.rolling(window=config.adx_period).mean()
+    atr = atr.replace(0, np.nan)
     pos_di = 100 * (pd.Series(pos_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
     neg_di = 100 * (pd.Series(neg_dm, index=df.index).rolling(window=config.adx_period).mean() / atr)
 
-    dx = 100 * (np.abs(pos_di - neg_di) / (pos_di + neg_di))
-    df["ADX"] = dx.rolling(window=config.adx_period).mean()
+    di_sum = (pos_di + neg_di).replace(0, np.nan)
+    dx = 100 * (np.abs(pos_di - neg_di) / di_sum)
+    df["ADX"] = dx.rolling(window=config.adx_period).mean().fillna(0)
 
     return df
 
@@ -70,7 +72,7 @@ def evaluate_strangle_setup(symbol: str, df: pd.DataFrame, config: StrangleScann
     curr = df.iloc[-1]
 
     # Condition 1: ADX flipped below 15 within the last 1-3 days
-    adx_below_threshold = (recent_df["ADX"] < config.adx_threshold).any()
+    adx_below_threshold = bool(recent_df["ADX"].iloc[-1] < config.adx_threshold)
 
     # Condition 2: CCI oscillating tightly between -50 and +50
     cci_tight = -config.cci_bound <= curr["CCI"] <= config.cci_bound

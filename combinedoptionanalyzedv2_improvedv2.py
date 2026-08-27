@@ -228,7 +228,7 @@ def detect_market_trend(symbol: str, lookback_period: str = "1y") -> str:
 
         # 3. Check Rangebound / Strangle Compression Setup
         recent_df = df.iloc[-3:]
-        adx_below_threshold = (recent_df["ADX"] < 15.0).any()
+        adx_below_threshold = bool(recent_df["ADX"].iloc[-1] < 15.0)
         cci_tight = -50.0 <= curr["CCI14"] <= 50.0
 
         ema_min = min(curr["EMA9"], curr["EMA18"], curr["EMA50"])
@@ -344,6 +344,9 @@ def fetch_option_chain(
     selected_expiry = expiry or (expiry_dates[0] if expiry_dates else None)
     if not selected_expiry:
         return None
+    if expiry_dates and selected_expiry not in expiry_dates:
+        LOGGER.warning("Requested expiry %s is unavailable for %s.", selected_expiry, symbol)
+        return None
 
     payload = get_json(
         session,
@@ -358,7 +361,34 @@ def fetch_option_chain(
 
 
 def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
-    return data.get("records", {}).get("data") or []
+    if not isinstance(data, dict):
+        return []
+    records_payload = data.get("records")
+    if not isinstance(records_payload, dict):
+        return []
+    records = records_payload.get("data")
+    if not isinstance(records, list):
+        return []
+    records = [row for row in records if isinstance(row, dict)]
+    selected_expiry = data.get("_selected_expiry")
+    if not selected_expiry:
+        return records
+
+    expiry_aware = [
+        row for row in records
+        if row.get("expiryDate") or row.get("expiryDates")
+    ]
+    if not expiry_aware:
+        return records
+    return [
+        row for row in expiry_aware
+        if row.get("expiryDate") == selected_expiry
+        or selected_expiry in (
+            row.get("expiryDates")
+            if isinstance(row.get("expiryDates"), list)
+            else [row.get("expiryDates")]
+        )
+    ]
 
 
 def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
@@ -756,7 +786,8 @@ def build_credit_spread_opportunity(
     dte = days_to_expiry(expiry)
     iv_for_calc = iv_decimal if iv_decimal > 0 else max(0.01, india_vix / 100.0)
     option_type = "PUT" if "Put" in strategy else "CALL"
-    prob_of_profit = probability_otm(underlying_price, short_strike, iv_for_calc, dte, option_type)
+    breakeven = short_strike - credit if option_type == "PUT" else short_strike + credit
+    prob_of_profit = probability_otm(underlying_price, breakeven, iv_for_calc, dte, option_type)
 
     return {
         "Symbol": symbol,
@@ -775,6 +806,7 @@ def build_credit_spread_opportunity(
         "R:R Ratio": round(return_on_risk, 2),
         "Return on Risk": round(return_on_risk, 2),
         "Short Strike Distance %": round(short_distance_pct * 100, 2),
+        "Breakeven": round(breakeven, 2),
         "Expected Move %": round(expected_move_pct(iv_for_calc, expiry) * 100, 2),
         "Probability of Profit": round(prob_of_profit, 3),
         "Avg OI": round(avg_open_interest),

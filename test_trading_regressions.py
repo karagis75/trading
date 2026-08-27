@@ -12,6 +12,12 @@ scanner = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(scanner)
 
+RANGEBOUND_PATH = Path(__file__).with_name("rangeboundstocks.py")
+RANGEBOUND_SPEC = importlib.util.spec_from_file_location("rangeboundstocks", RANGEBOUND_PATH)
+rangebound = importlib.util.module_from_spec(RANGEBOUND_SPEC)
+assert RANGEBOUND_SPEC.loader is not None
+RANGEBOUND_SPEC.loader.exec_module(rangebound)
+
 
 class TradingScannerRegressionTests(unittest.TestCase):
     def test_indicator_cleaning_handles_yfinance_multiindex_without_lookahead(self):
@@ -97,6 +103,58 @@ class TradingScannerRegressionTests(unittest.TestCase):
         }
 
         self.assertFalse(scanner.option_is_tradeable(option, scanner.ScannerConfig()))
+
+    def test_credit_spread_probability_uses_breakeven(self):
+        short_put = {
+            "strikePrice": "95",
+            "bidprice": "2.0",
+            "askPrice": "2.2",
+            "openInterest": "1000",
+        }
+        long_put = {
+            "strikePrice": "90",
+            "bidprice": "0.4",
+            "askPrice": "0.5",
+            "openInterest": "1000",
+        }
+
+        opportunity = scanner.build_credit_spread_opportunity(
+            "TEST",
+            "Bull Put Credit Spread",
+            1.0,
+            20.0,
+            100.0,
+            short_put,
+            long_put,
+            1000,
+            "01-Jan-2099",
+            scanner.ScannerConfig(),
+            0.20,
+        )
+
+        self.assertIsNotNone(opportunity)
+        assert opportunity is not None
+        self.assertEqual(opportunity["Breakeven"], 93.5)
+        expected_pop = scanner.probability_otm(
+            100.0, 93.5, 0.20, scanner.days_to_expiry("01-Jan-2099"), "PUT"
+        )
+        self.assertEqual(opportunity["Probability of Profit"], round(expected_pop, 3))
+
+    def test_malformed_records_payload_is_ignored(self):
+        self.assertEqual(scanner.latest_expiry_records({"records": []}), [])
+        self.assertEqual(scanner.latest_expiry_records({"records": {"data": [None]}}), [])
+
+    def test_flat_market_indicators_remain_finite(self):
+        frame = pd.DataFrame(
+            {"Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0},
+            index=pd.date_range("2026-01-01", periods=40),
+        )
+
+        result = rangebound.calculate_indicators(
+            frame, rangebound.StrangleScannerConfig()
+        )
+
+        self.assertTrue(np.isfinite(result[["CCI", "ADX"]].to_numpy()).all())
 
 
 if __name__ == "__main__":

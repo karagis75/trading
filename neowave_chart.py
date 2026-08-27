@@ -72,6 +72,8 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
     little extra confirmation to avoid marking noise as a wave. The result is
     deliberately bounded so it remains understandable and can be overridden.
     """
+    if len(frame) < 14:
+        raise ValueError("At least 14 price bars are required for automatic pivot width.")
     close = frame["Close"].astype(float)
     previous_close = close.shift(1)
     true_range = pd.concat([
@@ -80,6 +82,8 @@ def automatic_pivot_width(frame: pd.DataFrame) -> int:
         (frame["Low"] - previous_close).abs(),
     ], axis=1).max(axis=1)
     atr_percent = float((true_range.rolling(14).mean() / close).iloc[-1] * 100)
+    if not np.isfinite(atr_percent):
+        raise ValueError("Automatic pivot width requires finite OHLC data.")
     history_component = len(frame) / 180  # about 7 for five years of daily bars
     volatility_component = atr_percent * 0.8
     return int(np.clip(round(4 + history_component + volatility_component), 5, 18))
