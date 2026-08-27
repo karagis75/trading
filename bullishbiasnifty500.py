@@ -1,5 +1,6 @@
 import argparse
 import logging
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,26 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+EXCEL_READ_ENGINES = {
+    ".xlsx": "openpyxl",
+    ".xlsm": "openpyxl",
+    ".xltx": "openpyxl",
+    ".xltm": "openpyxl",
+    ".xls": "xlrd",
+    ".xlsb": "pyxlsb",
+    ".ods": "odf",
+}
+EXCEL_WRITE_ENGINES = {
+    ".xlsx": "openpyxl",
+    ".xlsm": "openpyxl",
+    ".xlsb": "pyxlsb",
+    ".ods": "odf",
+}
+TEXT_ENGINES = {"csv", "html", "htm"}
+TICKER_COLUMNS = ("Ticker", "ticker", "Symbol", "symbol", "SYMBOL")
+OLE_COMPOUND_SIGNATURE = b"\xd0\xcf\x11\xe0"
+ZIP_SIGNATURE = b"PK\x03\x04"
 
 
 @dataclass(frozen=True)
@@ -134,17 +155,173 @@ def analyze_symbol(symbol: str, config: BullishScannerConfig) -> dict[str, Any] 
         return None
 
 
+def excel_engine_for_path(
+    path: str | Path,
+    engine: str | None = None,
+    *,
+    mode: str = "reader",
+) -> str | None:
+    """Return a pandas Excel engine from an explicit value or the file suffix."""
+    if engine:
+        normalized = engine.strip().lower()
+        if normalized in TEXT_ENGINES:
+            return None
+        return normalized
+
+    suffix = Path(path).suffix.lower()
+    mapping = EXCEL_READ_ENGINES if mode == "reader" else EXCEL_WRITE_ENGINES
+    return mapping.get(suffix)
+
+
+def sniff_excel_engine(path: str | Path) -> str | None:
+    """Infer an Excel engine from file signatures when the suffix is missing or unknown."""
+    source = Path(path)
+    with source.open("rb") as handle:
+        peek = handle.read(8)
+
+    if peek.startswith(OLE_COMPOUND_SIGNATURE):
+        return "xlrd"
+    if not peek.startswith(ZIP_SIGNATURE):
+        return None
+
+    try:
+        with zipfile.ZipFile(source) as archive:
+            names = {name.replace("\\", "/").lower() for name in archive.namelist()}
+    except zipfile.BadZipFile:
+        return None
+
+    if "xl/workbook.bin" in names:
+        return "pyxlsb"
+    if "content.xml" in names:
+        return "odf"
+    if "xl/workbook.xml" in names:
+        return "openpyxl"
+    return None
+
+
+def _read_first_html_table(path: Path) -> pd.DataFrame:
+    tables = pd.read_html(path)
+    if not tables:
+        raise ValueError(f"No HTML tables found in '{path}'")
+    return tables[0]
+
+
+def _has_ticker_column(df: pd.DataFrame) -> bool:
+    return any(column in df.columns for column in TICKER_COLUMNS)
+
+
+def _try_read_csv(path: Path) -> pd.DataFrame | None:
+    try:
+        frame = pd.read_csv(path)
+    except Exception:
+        return None
+    return frame if _has_ticker_column(frame) else None
+
+
+def _try_read_html(path: Path) -> pd.DataFrame | None:
+    try:
+        frame = _read_first_html_table(path)
+    except Exception:
+        return None
+    return frame if _has_ticker_column(frame) else None
+
+
+def read_input_table(path: str | Path, engine: str | None = None) -> pd.DataFrame:
+    """Load a ticker universe from Excel, CSV, or HTML using an explicit or inferred engine."""
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(f"Input file not found: {source}")
+
+    requested = (engine or "").strip().lower() or None
+    suffix = source.suffix.lower()
+
+    if requested == "csv" or (requested is None and suffix == ".csv"):
+        return pd.read_csv(source)
+
+    if requested in {"html", "htm"} or (requested is None and suffix in {".html", ".htm"}):
+        return _read_first_html_table(source)
+
+    excel_engine = excel_engine_for_path(source, requested)
+    if excel_engine is None:
+        excel_engine = sniff_excel_engine(source)
+
+    if excel_engine:
+        try:
+            return pd.read_excel(source, engine=excel_engine)
+        except Exception as exc:
+            if requested:
+                raise ValueError(
+                    f"Failed to read '{source}' with engine '{excel_engine}': {exc}"
+                ) from exc
+            # NSE-style .xls files are often HTML tables, not BIFF workbooks.
+            fallback = _try_read_html(source)
+            if fallback is None:
+                fallback = _try_read_csv(source)
+            if fallback is not None:
+                return fallback
+            raise ValueError(
+                "Excel file format cannot be determined, you must specify an engine "
+                f"manually. Failed to read '{source}' with engine '{excel_engine}': {exc}"
+            ) from exc
+
+    fallback = _try_read_csv(source)
+    if fallback is None:
+        fallback = _try_read_html(source)
+    if fallback is not None:
+        return fallback
+
+    raise ValueError(
+        "Excel file format cannot be determined, you must specify an engine manually. "
+        f"Pass --engine (openpyxl, xlrd, pyxlsb, odf, csv, html) for '{source}'."
+    )
+
+
+def extract_tickers(df: pd.DataFrame) -> list[str]:
+    """Return ticker symbols from common column names used by NSE lists."""
+    for column in TICKER_COLUMNS:
+        if column in df.columns:
+            values = df[column].dropna().astype(str).str.strip()
+            return [value for value in values if value and value.lower() != "nan"]
+
+    raise KeyError(
+        "Input file must contain a 'Ticker' or 'Symbol' column. "
+        f"Found columns: {list(df.columns)}"
+    )
+
+
+def write_results(df: pd.DataFrame, path: str | Path, engine: str | None = None) -> None:
+    """Write scan results using a CSV writer or an explicit Excel engine."""
+    destination = Path(path)
+    requested = (engine or "").strip().lower() or None
+    suffix = destination.suffix.lower()
+
+    if requested == "csv" or suffix == ".csv":
+        df.to_csv(destination, index=False)
+        return
+
+    excel_engine = excel_engine_for_path(destination, requested, mode="writer") or "openpyxl"
+    df.to_excel(destination, index=False, engine=excel_engine)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan tickers from Excel file for Bullish EMA/CCI/ADX Setup.")
-    parser.add_argument("--input", default="NSE_Stocks_List_20251230_1617.xlsx", help="Path to input Excel file.")
+    parser.add_argument("--input", default="NSE_Stocks_List_20251230_1617.xlsx", help="Path to input Excel or CSV file.")
     parser.add_argument("--output", default="Bullish_Bias_Analysis.xlsx", help="Output path for results.")
+    parser.add_argument(
+        "--engine",
+        default=None,
+        help=(
+            "Input file engine: openpyxl (.xlsx/.xlsm), xlrd (.xls), pyxlsb (.xlsb), "
+            "odf (.ods), csv, or html. Auto-detected from the file when omitted."
+        ),
+    )
     args = parser.parse_args()
 
     config = BullishScannerConfig()
 
     try:
-        df_input = pd.read_excel(args.input)
-        tickers = df_input["Ticker"].dropna().astype(str).tolist()
+        df_input = read_input_table(args.input, engine=args.engine)
+        tickers = extract_tickers(df_input)
     except Exception as e:
         print(f"Excel Error: {e}")
         return
@@ -163,11 +340,7 @@ def main() -> None:
 
     output_path = Path(args.output)
     df_results = pd.DataFrame(results).sort_values(by=["ADX", "CCI"], ascending=False)
-    
-    if output_path.suffix.lower() == ".csv":
-        df_results.to_csv(output_path, index=False)
-    else:
-        df_results.to_excel(output_path, index=False)
+    write_results(df_results, output_path)
 
     print(f"Scan complete. Found {len(results)} bullish setup(s). Saved to '{output_path}'.")
 
