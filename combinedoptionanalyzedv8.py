@@ -130,10 +130,9 @@ def calculate_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [col[0] for col in df.columns]
 
-    # Clean missing OHLC data & derive Close if NaN
-    df[["Open", "High", "Low", "Close"]] = df[["Open", "High", "Low", "Close"]].ffill().bfill()
-    if df["Close"].isna().any():
-        df["Close"] = df["Close"].fillna((df["High"] + df["Low"]) / 2).fillna(df["Open"])
+    # Incomplete bars must not be filled from future rows: doing so leaks future
+    # prices into historical indicators and can fabricate candles.
+    df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
 
     # Ensure required columns are float64
     for col in ["Open", "High", "Low", "Close"]:
@@ -444,10 +443,14 @@ def latest_expiry_records(data: dict[str, Any]) -> list[dict[str, Any]]:
         if row.get("expiryDate") == selected_expiry
         or selected_expiry in (row.get("expiryDates") or [])
     ]
+    has_expiry_metadata = any(
+        row.get("expiryDate") or row.get("expiryDates") for row in records
+    )
     # Some NSE responses already contain only the requested expiry and omit the
-    # expiry field from each row. Preserve those responses rather than dropping
-    # the entire chain.
-    return matching_records or records
+    # expiry field from every row. Preserve those responses. If metadata exists,
+    # an empty match means the requested expiry is not represented and must not
+    # contaminate the analysis with another expiry.
+    return matching_records if has_expiry_metadata else records
 
 
 def load_symbol_map(path: str | None, value_column: str) -> dict[str, str]:
@@ -733,7 +736,9 @@ def parse_nse_expiry(expiry: str) -> date | None:
 
 def days_to_expiry(expiry: str) -> int:
     expiry_date = parse_nse_expiry(expiry)
-    return max(1, (expiry_date - date.today()).days) if expiry_date else 1
+    if not expiry_date:
+        raise ValueError(f"Invalid NSE expiry: {expiry!r}")
+    return max(1, (expiry_date - date.today()).days)
 
 
 def expected_move_pct(iv_decimal: float, expiry: str) -> float:

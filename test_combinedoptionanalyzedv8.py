@@ -26,6 +26,16 @@ class ScannerDataRobustnessTests(unittest.TestCase):
 
         self.assertEqual([100], [row["strikePrice"] for row in records])
 
+    def test_latest_expiry_records_does_not_fallback_to_another_expiry(self):
+        data = {
+            "_selected_expiry": "25-Aug-2026",
+            "records": {
+                "data": [{"expiryDate": "29-Aug-2026", "strikePrice": 110}]
+            },
+        }
+
+        self.assertEqual([], scanner.latest_expiry_records(data))
+
     def test_explicit_unavailable_expiry_is_rejected_before_chain_request(self):
         session = object()
         with patch.object(
@@ -90,6 +100,27 @@ class ScannerDataRobustnessTests(unittest.TestCase):
         self.assertEqual(1.0, context.pcr)
         self.assertEqual(200, context.max_open_interest)
         self.assertEqual("100", context.records[0]["CE"]["strikePrice"])
+
+    def test_indicator_cleaning_does_not_backfill_from_future_bars(self):
+        import pandas as pd
+
+        frame = pd.DataFrame(
+            {
+                "Open": [None, 10.0],
+                "High": [None, 11.0],
+                "Low": [None, 9.0],
+                "Close": [None, 10.0],
+            }
+        )
+
+        cleaned = scanner.calculate_technical_indicators(frame)
+
+        self.assertEqual([1], cleaned.index.tolist())
+        self.assertEqual(10.0, cleaned.iloc[0]["Close"])
+
+    def test_invalid_expiry_is_rejected_for_risk_calculations(self):
+        with self.assertRaisesRegex(ValueError, "Invalid NSE expiry"):
+            scanner.days_to_expiry("not-an-expiry")
 
 
 if __name__ == "__main__":

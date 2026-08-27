@@ -84,7 +84,7 @@ function processCustomScanner(symbol, rows) {
     // 2. Extract 52-Week Structural Extremes (250 trading days)
     const yearSlice = rows.slice(-250);
     const weeklyMin52 = yearSlice.reduce((min, r) => r.low < min ? r.low : min, Infinity);
-    const weeklyMax52 = yearSlice.reduce((max, r) => r.close > max ? r.close : max, -Infinity);
+    const weeklyMax52 = yearSlice.reduce((max, r) => r.high > max ? r.high : max, -Infinity);
 
     // 3. Evaluate Script Parameters Exactly
     const cond1 = (curClose >= curEma150) && (curClose >= curEma200);
