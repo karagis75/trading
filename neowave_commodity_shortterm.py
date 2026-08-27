@@ -3,10 +3,10 @@
 
 Examples
 --------
-python neowave_commodity.py CRUDE
-python neowave_commodity.py GOLD --period 2y
-python neowave_commodity.py NG --pivot 8
-python neowave_commodity.py SILVER --show
+python neowave_commodity_shortterm.py CRUDE
+python neowave_commodity_shortterm.py GOLD --period 2y
+python neowave_commodity_shortterm.py NG --pivot 8
+python neowave_commodity_shortterm.py SILVER --show
 
 Install once:
     pip install yfinance pandas numpy matplotlib
@@ -137,10 +137,12 @@ def latest_impulse(pivots: list[dict], bearish: bool) -> tuple[dict, dict] | Non
         if macro_high["index"] < macro_low["index"]:
             return macro_high, macro_low
     else:
-        # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period
+        # Macro Bullish: Find absolute lowest low and absolute highest high in the wave period.
+        # Require the low to occur before the high, matching the bearish time-order check.
         macro_low = min(low_pivots, key=lambda x: x["price"])
         macro_high = max(high_pivots, key=lambda x: x["price"])
-        return macro_low, macro_high
+        if macro_low["index"] < macro_high["index"]:
+            return macro_low, macro_high
         
     return None
 
