@@ -2,7 +2,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -83,6 +83,26 @@ class Nifty500IntersectTests(unittest.TestCase):
             tickers = scanner.get_nifty500_tickers(path)
 
         self.assertEqual(tickers, ["RELIANCE.NS", "HDFCBANK.NS"])
+
+    def test_csv_input_is_parsed_without_using_excel_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "ind_nifty500list.csv"
+            pd.DataFrame({"Symbol": ["RELIANCE", "HDFCBANK.NS"]}).to_csv(
+                path, index=False
+            )
+
+            with patch.object(pd, "read_excel") as read_excel:
+                tickers = scanner.get_nifty500_tickers(path)
+
+        self.assertEqual(tickers, ["RELIANCE.NS", "HDFCBANK.NS"])
+        read_excel.assert_not_called()
+
+    def test_repo_nifty500_csv_loads_symbols(self) -> None:
+        tickers = scanner.get_nifty500_tickers("ind_nifty500list.csv")
+
+        self.assertEqual(len(tickers), 500)
+        self.assertIn("RELIANCE.NS", tickers)
+        self.assertIn("TCS.NS", tickers)
 
     def test_github_excel_is_downloaded_from_raw_url(self) -> None:
         response = Mock()
