@@ -2,8 +2,8 @@
 
 The Y axis contains the entry setups and the X axis contains the mapped
 profit, trailing, and ATR-based exits.  Price data is fetched from Yahoo
-Finance.  The stock universe is loaded from the GitHub Excel list (or a
-local --input path), not from NSE.
+Finance.  The stock universe is loaded from the GitHub Excel list (or a local
+CSV/Excel --input path), not from NSE.
 """
 
 from __future__ import annotations
@@ -112,20 +112,25 @@ def _symbols_from_frame(frame: pd.DataFrame) -> list[str]:
     return _namespace_symbols(frame[column].dropna().astype(str).tolist())
 
 
-def _load_workbook(
+def _load_stock_list(
     source: str,
     session: requests.Session | None = None,
 ) -> pd.DataFrame:
+    """Read a CSV or Excel stock list from a URL or local path."""
     if source.startswith("http://") or source.startswith("https://"):
         url = to_raw_github_url(source)
         http = session or requests.Session()
         response = http.get(url, headers=HTTP_HEADERS, timeout=30)
         response.raise_for_status()
+        if url.lower().split("?", 1)[0].endswith(".csv"):
+            return pd.read_csv(io.BytesIO(response.content))
         return pd.read_excel(io.BytesIO(response.content))
 
     path = Path(source)
     if not path.exists():
         raise FileNotFoundError(f"Stock list not found: {path}")
+    if path.suffix.lower() == ".csv":
+        return pd.read_csv(path)
     return pd.read_excel(path)
 
 
@@ -133,7 +138,7 @@ def get_nifty500_tickers(
     source: str | Path | None = None,
     session: requests.Session | None = None,
 ) -> list[str]:
-    """Return NIFTY 500 symbols from the GitHub Excel list (or a local file).
+    """Return NIFTY 500 symbols from a CSV/Excel list or GitHub URL.
 
     The default source is the repository workbook:
     https://github.com/karagis75/trading/blob/main/NSE_Stocks_List_20251230_1617.xlsx
@@ -157,7 +162,7 @@ def get_nifty500_tickers(
     last_error: Exception | None = None
     for candidate in candidates:
         try:
-            tickers = _symbols_from_frame(_load_workbook(candidate, session))
+            tickers = _symbols_from_frame(_load_stock_list(candidate, session))
             if not tickers:
                 raise ValueError(f"Stock list is empty: {candidate}")
             return tickers
@@ -384,7 +389,7 @@ def main() -> None:
         "--input",
         default=DEFAULT_STOCK_LIST_URL,
         help=(
-            "Excel workbook or GitHub URL with a Ticker/Symbol column. "
+            "CSV/Excel file or GitHub URL with a Ticker/Symbol column. "
             "Defaults to the repository NSE stocks list."
         ),
     )
