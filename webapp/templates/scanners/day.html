@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ scan_date or 'No data' }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow"><a href="{{ url_for('scanners.scanner_index') }}">Scanner View</a> / {{ scanner_id }}</p>
+  <h1>{{ title }}</h1>
+  <p class="lede">
+    {% if scan_date %}
+      Showing <strong>{{ scan_date }}</strong>
+      {% if status %}<span class="status-pill {{ status_css }}">{{ status }}</span>{% endif %}
+      {% if run and run.result_count is not none %}· {{ run.result_count }} result(s){% endif %}
+    {% else %}
+      No scan history available for this scanner.
+    {% endif %}
+  </p>
+</section>
+
+{% if dates %}
+<nav class="date-bar" aria-label="Recent scan dates">
+  {% for day in dates %}
+    <a class="date-chip {% if day == scan_date %}is-active{% endif %}"
+       href="{{ url_for('scanners.scanner_day', scanner_id=scanner_id, scan_date=day) }}">{{ day }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+
+{% if empty_reason %}
+  <div class="banner {{ status_css }}">{{ empty_reason }}</div>
+{% endif %}
+
+{% if table_rows %}
+  <div class="table-shell">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Change</th>
+          {% for column in columns %}
+            <th>{{ column }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in table_rows %}
+          <tr class="{% if not row.picked %}is-dropped{% endif %}">
+            <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
+            {% for cell in row.cells %}
+              <td>
+                {% if loop.first and row.symbol %}
+                  <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">{{ cell if cell is not none else row.symbol }}</a>
+                {% else %}
+                  {{ cell if cell is not none else '—' }}
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% elif not empty_reason %}
+  <p class="empty">No rows to display.</p>
+{% endif %}
+{% endblock %}

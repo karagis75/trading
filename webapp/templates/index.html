@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Trading Scans · Home{% endblock %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Daily membership dashboard</p>
+  <h1>Trading Scans</h1>
+  <p class="lede">
+    {% if latest_date %}
+      Latest scan date <strong>{{ latest_date }}</strong>. Choose a view to inspect scanners or look up a stock.
+    {% else %}
+      No scan data yet. Run the daily job or backfill historical outputs to populate the dashboard.
+    {% endif %}
+  </p>
+</section>
+
+<section class="choice-grid" aria-label="Main views">
+  <a class="choice-card" href="{{ url_for('scanners.scanner_index') }}">
+    <h2>Scanner View</h2>
+    <p>Open each daily scanner, review the latest hits, and step back through the previous five scan days.</p>
+    <span class="choice-cta">Open scanners →</span>
+  </a>
+  <a class="choice-card" href="{{ url_for('stocks.stock_search') }}">
+    <h2>Stock View</h2>
+    <p>Search any ticker that appeared in a scanner. See today’s summary and a five-day add/remove history.</p>
+    <span class="choice-cta">Search stocks →</span>
+  </a>
+</section>
+
+{% if health %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Run health{% if latest_date %} · {{ latest_date }}{% endif %}</h2>
+  </div>
+  <div class="health-strip">
+    {% for item in health %}
+      <div class="health-item" title="{{ item.title }}">
+        <span class="status-dot {{ item.status_css }}"></span>
+        <span class="health-label">{{ item.title }}</span>
+        <span class="health-meta">
+          {% if item.status %}{{ item.status }}{% if item.result_count is not none %} · {{ item.result_count }}{% endif %}{% else %}no run{% endif %}
+        </span>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+{% endblock %}

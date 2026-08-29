@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Scanner View · Trading Scans{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Scanner View</p>
+  <h1>Daily scanners</h1>
+  <p class="lede">
+    {% if latest_date %}
+      Each scanner links to its latest day. Latest available date: <strong>{{ latest_date }}</strong>.
+    {% else %}
+      No scanner history has been ingested yet.
+    {% endif %}
+  </p>
+</section>
+
+<div class="scanner-list">
+  {% for scanner in scanners %}
+    <article class="scanner-row {% if not scanner.job_enabled %}is-disabled{% endif %}">
+      <div>
+        <h2>
+          {% if scanner.job_enabled %}
+            <a href="{{ url_for('scanners.scanner_latest', scanner_id=scanner.scanner_id) }}">{{ scanner.title }}</a>
+          {% else %}
+            {{ scanner.title }}
+          {% endif %}
+        </h2>
+        <p class="muted">{{ scanner.scanner_id }} · {{ scanner.role or 'scanner' }}</p>
+      </div>
+      <div class="scanner-meta">
+        <span class="status-pill {{ scanner.status_css }}">{{ scanner.status or 'no run' }}</span>
+        {% if scanner.scan_date %}
+          <span class="muted">{{ scanner.scan_date }}</span>
+        {% endif %}
+        {% if scanner.result_count is not none %}
+          <span class="count">{{ scanner.result_count }} hits</span>
+        {% endif %}
+      </div>
+    </article>
+  {% else %}
+    <p class="empty">No scanners are registered yet.</p>
+  {% endfor %}
+</div>
+{% endblock %}
