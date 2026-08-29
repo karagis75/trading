@@ -7,10 +7,11 @@ from typing import Any
 
 from flask import current_app, g
 
-from scanner_history import db, queries
+from scanner_history import queries
 from scanner_history.normalize import normalize_symbol
 
 from .config import AppConfig, display_name_for, preferred_columns
+from .perf import thread_db
 
 
 def get_config() -> AppConfig:
@@ -18,15 +19,15 @@ def get_config() -> AppConfig:
 
 
 def get_db():
+    """Return a thread-local DB connection (no per-request open/close overhead)."""
     if "db" not in g:
-        g.db = db.connect(get_config().database_url)
+        g.db = thread_db(get_config().database_url)
     return g.db
 
 
 def close_db(_exc=None) -> None:
-    connection = g.pop("db", None)
-    if connection is not None:
-        connection.close()
+    # Thread-local connections are kept open — just clear the request reference.
+    g.pop("db", None)
 
 
 def parse_metadata(raw: Any) -> dict[str, Any]:

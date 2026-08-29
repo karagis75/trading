@@ -16,6 +16,7 @@ from ..helpers import (
     status_css,
     validation_failed,
 )
+from ..perf import HISTORICAL_TTL, LIVE_TTL, SHORT_TTL, cached
 
 scanners_bp = Blueprint("scanners", __name__, url_prefix="/scanners")
 
@@ -24,6 +25,19 @@ scanners_bp = Blueprint("scanners", __name__, url_prefix="/scanners")
 def scanner_index():
     connection = get_db()
     cfg = get_config()
+    scanners = cached(
+        "scanner_index",
+        LIVE_TTL,
+        lambda: _build_scanner_index(connection, cfg),
+    )
+    return render_template(
+        "scanners/index.html",
+        scanners=scanners,
+        latest_date=cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection)),
+    )
+
+
+def _build_scanner_index(connection, cfg):
     scanners = enrich_scanner_index(
         queries.scanner_index(connection),
         [job.name for job in cfg.jobs],
@@ -33,17 +47,17 @@ def scanner_index():
         job = jobs_by_name.get(row["scanner_id"])
         row["job_enabled"] = job.enabled if job else bool(row.get("enabled", 1))
         row["role"] = row.get("role") or (job.role if job else "primary_scanner")
-    return render_template(
-        "scanners/index.html",
-        scanners=scanners,
-        latest_date=queries.latest_scan_date(connection),
-    )
+    return scanners
 
 
 @scanners_bp.route("/<scanner_id>")
 def scanner_latest(scanner_id: str):
     connection = get_db()
-    dates = queries.scanner_dates(connection, scanner_id, limit=1)
+    dates = cached(
+        f"scanner_dates:6:{scanner_id}",
+        SHORT_TTL,
+        lambda: queries.scanner_dates(connection, scanner_id, limit=6),
+    )
     if not dates:
         return render_template(
             "scanners/day.html",
@@ -69,20 +83,50 @@ def scanner_latest(scanner_id: str):
 def scanner_day(scanner_id: str, scan_date: str):
     connection = get_db()
     cfg = get_config()
-    known = {job.name for job in cfg.jobs} | {row["scanner_id"] for row in queries.list_scanners(connection)}
+
+    known = cached(
+        "known_scanners",
+        LIVE_TTL,
+        lambda: {job.name for job in cfg.jobs} | {row["scanner_id"] for row in queries.list_scanners(connection)},
+    )
     if scanner_id not in known:
         abort(404)
 
-    # Optional stock filter — preserved across date navigation via URL param.
     stock_filter = (request.args.get("stock") or "").strip().upper()
 
-    dates = queries.scanner_dates(connection, scanner_id, limit=6)
-    run = queries.scanner_day_run(connection, scanner_id, scan_date)
+    # Date chips — use SHORT_TTL so a new day appears within 1 min of run finish.
+    dates = cached(
+        f"scanner_dates:6:{scanner_id}",
+        SHORT_TTL,
+        lambda: queries.scanner_dates(connection, scanner_id, limit=6),
+    )
+
+    # Run metadata — historical days are immutable, use HISTORICAL_TTL.
+    from datetime import date as _date
+    try:
+        _date.fromisoformat(scan_date)
+        is_historical = scan_date != cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
+    except ValueError:
+        is_historical = False
+
+    run_ttl = HISTORICAL_TTL if is_historical else SHORT_TTL
+    run = cached(
+        f"run:{scanner_id}:{scan_date}",
+        run_ttl,
+        lambda: queries.scanner_day_run(connection, scanner_id, scan_date),
+    )
+
     title = display_name_for(scanner_id, (run or {}).get("display_name"))
     status = (run or {}).get("status")
     is_downstream = (run.get("role") if run else None) == "downstream"
 
-    rows = queries.scanner_day_rows(connection, scanner_id, scan_date) if run and status == "success" else []
+    row_ttl = HISTORICAL_TTL if is_historical else SHORT_TTL
+    rows = cached(
+        f"day_rows:{scanner_id}:{scan_date}",
+        row_ttl,
+        lambda: queries.scanner_day_rows(connection, scanner_id, scan_date) if run and status == "success" else [],
+    )
+
     columns = build_table_columns(scanner_id, rows) if rows else _preferred_fallback(scanner_id)
 
     table_rows = []

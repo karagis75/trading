@@ -25,6 +25,7 @@ from scanner_history.queries import (
 from scanner_history.tracker import MembershipTracker, TrackingConfig
 from webapp import create_app
 from webapp.config import AppConfig, JobMeta
+from webapp.perf import invalidate as invalidate_cache
 
 
 def write_universe(path: Path, tickers: list[str]) -> None:
@@ -50,6 +51,7 @@ def write_hits(path: Path, rows: list[dict]) -> None:
 
 class DashboardHarness(unittest.TestCase):
     def setUp(self) -> None:
+        invalidate_cache()   # ensure module-level cache doesn't bleed between tests
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.universe = self.root / "universe.csv"
@@ -262,6 +264,7 @@ class DashboardHarness(unittest.TestCase):
 
 class OptionValidationHighlightTests(unittest.TestCase):
     def setUp(self) -> None:
+        invalidate_cache()   # ensure module-level cache doesn't bleed between tests
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.universe = self.root / "universe.csv"
