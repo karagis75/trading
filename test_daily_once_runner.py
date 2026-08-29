@@ -5,6 +5,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock, patch
 import daily_once_runner as runner
 
 
@@ -340,6 +341,45 @@ class DailyOnceRunnerTests(unittest.TestCase):
 
 
 class JobsConfigAndCliTests(unittest.TestCase):
+    def test_main_passes_configured_history_database_to_runner(self) -> None:
+        postgres_url = "postgresql://user:password@localhost/trading_history"
+        report = runner.RunReport(
+            status=runner.STATUS_SUCCESS,
+            run_date=date.today(),
+            message="ok",
+        )
+        daily = Mock()
+        daily.run.return_value = report
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            jobs_path = root / "jobs.json"
+            jobs_path.write_text('{"jobs": []}', encoding="utf-8")
+            with (
+                patch.object(runner, "DailyOnceRunner", return_value=daily) as runner_class,
+                patch.object(runner, "configure_logging"),
+                patch_stdout(),
+            ):
+                code = runner.main(
+                    [
+                        "--jobs",
+                        str(jobs_path),
+                        "--state",
+                        str(root / "state.json"),
+                        "--lock",
+                        str(root / "run.lock"),
+                        "--log-dir",
+                        str(root / "logs"),
+                        "--repo-root",
+                        str(root),
+                        "--history-db",
+                        postgres_url,
+                    ]
+                )
+
+        self.assertEqual(code, runner.EXIT_OK)
+        self.assertEqual(runner_class.call_args.kwargs["history_db"], postgres_url)
+
     def test_bundled_jobs_file_points_at_real_scripts(self) -> None:
         jobs = runner.load_jobs(runner.DEFAULT_JOBS_PATH)
         self.assertGreaterEqual(len(jobs), 5)
@@ -517,6 +557,8 @@ class SchedulerScriptTests(unittest.TestCase):
         self.assertIn("New-ScheduledTaskTrigger -AtLogOn", register)
         self.assertIn("StartWhenAvailable", register)
         self.assertIn("daily_once_runner.py", run)
+        self.assertIn("'TRADING_DATABASE_URL'", run)
+        self.assertIn(".venv\\Scripts\\python.exe", run)
         self.assertIn("Unregister-ScheduledTask", unregister)
 
 

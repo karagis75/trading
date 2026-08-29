@@ -19,6 +19,16 @@ $RepoRoot = Split-Path -Parent $SchedulerDir
 $Runner = Join-Path $RepoRoot 'daily_once_runner.py'
 $LogDir = Join-Path $SchedulerDir 'logs'
 
+if (-not $env:TRADING_DATABASE_URL) {
+    $userDatabaseUrl = [Environment]::GetEnvironmentVariable(
+        'TRADING_DATABASE_URL',
+        'User'
+    )
+    if ($userDatabaseUrl) {
+        $env:TRADING_DATABASE_URL = $userDatabaseUrl
+    }
+}
+
 if (-not (Test-Path -LiteralPath $Runner)) {
     throw "daily_once_runner.py was not found at $Runner"
 }
@@ -27,6 +37,7 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 function Get-PythonExecutable {
     $candidates = @(
+        @{ File = (Join-Path $RepoRoot '.venv\Scripts\python.exe'); Args = @() },
         @{ File = 'py'; Args = @('-3') },
         @{ File = 'python'; Args = @() },
         @{ File = 'python3'; Args = @() }

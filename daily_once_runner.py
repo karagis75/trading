@@ -524,6 +524,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK_PATH, help="Exclusive run lock file.")
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR, help="Directory for daily logs.")
     parser.add_argument(
+        "--history-db",
+        default=DEFAULT_HISTORY_DB,
+        help=(
+            "Scanner history database path or PostgreSQL URL. Defaults to "
+            "TRADING_DATABASE_URL when set, otherwise local SQLite."
+        ),
+    )
+    parser.add_argument(
         "--repo-root",
         type=Path,
         default=REPO_ROOT,
@@ -568,11 +576,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_logging(args.log_dir, today)
 
     jobs = load_jobs(args.jobs)
+    history_backend = (
+        "PostgreSQL"
+        if str(args.history_db).startswith(("postgresql://", "postgres://"))
+        else "SQLite"
+    )
+    LOGGER.info("Scanner history backend: %s", history_backend)
     runner = DailyOnceRunner(
         repo_root=args.repo_root.resolve(),
         jobs=jobs,
         state_path=args.state,
         lock_path=args.lock,
+        history_db=args.history_db,
     )
     report = runner.run(force=args.force)
     print(report.message)
