@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import date
 from pathlib import Path
 from typing import Any, Sequence
@@ -14,7 +15,10 @@ from . import db, queries, report
 from .tracker import MembershipTracker, TrackingConfig
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_DB = REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"
+DEFAULT_DB = os.environ.get(
+    "TRADING_DATABASE_URL",
+    str(REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"),
+)
 DEFAULT_UNIVERSE = REPO_ROOT / "ind_nifty500list.csv"
 DEFAULT_JOBS = REPO_ROOT / "scheduler" / "jobs.json"
 

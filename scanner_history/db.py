@@ -1,8 +1,14 @@
-"""SQLite schema and connection helpers for scanner membership history."""
+"""Database schema and connection helpers for scanner membership history.
+
+SQLite remains supported for local tests and backward compatibility. Set
+TRADING_DATABASE_URL to a PostgreSQL URL for scheduled production runs.
+"""
 
 from __future__ import annotations
 
 import sqlite3
+import re
+from typing import Any
 from pathlib import Path
 
 SCHEMA_VERSION = "1"
@@ -97,8 +103,70 @@ CREATE INDEX IF NOT EXISTS idx_detail_symbol
     ON scanner_result_detail(symbol, run_id);
 """
 
+POSTGRES_SCHEMA = SCHEMA.replace(
+    "id INTEGER PRIMARY KEY AUTOINCREMENT",
+    "id BIGSERIAL PRIMARY KEY",
+).replace(
+    "INTEGER PRIMARY KEY AUTOINCREMENT",
+    "BIGSERIAL PRIMARY KEY",
+)
 
-def connect(path: str | Path) -> sqlite3.Connection:
+
+class PostgresConnection:
+    """Small DB-API compatibility layer for the existing tracker/query code."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()):
+        return self._connection.execute(sql.replace("?", "%s"), params)
+
+    def executemany(self, sql: str, params):
+        return self._connection.executemany(sql.replace("?", "%s"), params)
+
+    def commit(self) -> None:
+        self._connection.commit()
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+def _initialize_postgres(connection: PostgresConnection) -> None:
+    # PostgreSQL does not support SQLite's executescript(); execute each
+    # statement separately while preserving the shared schema definition.
+    for statement in POSTGRES_SCHEMA.split(";"):
+        statement = statement.strip()
+        if statement:
+            connection.execute(statement)
+    current = connection.execute("SELECT value FROM meta WHERE key = ?", ("schema_version",)).fetchone()
+    if current is None:
+        connection.execute(
+            "INSERT INTO meta(key, value) VALUES (?, ?)",
+            ("schema_version", SCHEMA_VERSION),
+        )
+    connection.commit()
+
+
+def connect(path: str | Path):
+    """Connect to SQLite paths or PostgreSQL URLs.
+
+    PostgreSQL URLs use the form
+    ``postgresql://user:password@host:5432/database``.
+    """
+    value = str(path)
+    if value.startswith(("postgresql://", "postgres://")):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError(
+                "PostgreSQL support requires psycopg. Install it with "
+                "'python -m pip install \"psycopg[binary]\"'."
+            ) from exc
+        connection = PostgresConnection(psycopg.connect(value, row_factory=dict_row))
+        _initialize_postgres(connection)
+        return connection
+
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(destination)

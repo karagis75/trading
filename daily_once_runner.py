@@ -26,7 +26,10 @@ DEFAULT_JOBS_PATH = SCHEDULER_DIR / "jobs.json"
 DEFAULT_STATE_PATH = SCHEDULER_DIR / "state" / "run-state.json"
 DEFAULT_LOCK_PATH = SCHEDULER_DIR / "state" / "run.lock"
 DEFAULT_LOG_DIR = SCHEDULER_DIR / "logs"
-DEFAULT_HISTORY_DB = REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"
+DEFAULT_HISTORY_DB = os.environ.get(
+    "TRADING_DATABASE_URL",
+    str(REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"),
+)
 DEFAULT_UNIVERSE_PATH = REPO_ROOT / "ind_nifty500list.csv"
 
 STATUS_SUCCESS = "success"
@@ -279,7 +282,7 @@ class DailyOnceRunner:
         now_fn: Callable[[], datetime] | None = None,
         job_executor: Callable[[JobSpec], JobResult] | None = None,
         lock_factory: Callable[[Path], FileLock] | None = None,
-        history_db: Path | None = None,
+        history_db: str | Path | None = None,
         universe_path: Path | None = None,
         tracker: Any = None,
         write_history_report: bool = True,
@@ -293,7 +296,7 @@ class DailyOnceRunner:
         self.now_fn = now_fn or datetime.now
         self.job_executor = job_executor or self._execute_job
         self.lock_factory = lock_factory or FileLock
-        self.history_db = Path(history_db) if history_db else repo_root / "scanner_history" / "scanner_history.sqlite3"
+        self.history_db = history_db or repo_root / "scanner_history" / "scanner_history.sqlite3"
         self.universe_path = Path(universe_path) if universe_path else repo_root / "ind_nifty500list.csv"
         self._injected_tracker = tracker
         self._live_tracker = None
