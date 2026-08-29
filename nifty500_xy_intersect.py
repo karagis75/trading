@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -57,6 +59,17 @@ class IntersectScannerConfig:
     adx_lookback: int = 5
     atr_target_multiple: float = 2.5
     download_period: str = "3mo"
+    request_delay: float = 0.0
+    max_retries: int = 3
+    retry_delay: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.request_delay < 0 or not math.isfinite(self.request_delay):
+            raise ValueError("request_delay must be a finite non-negative number")
+        if self.max_retries < 1:
+            raise ValueError("max_retries must be at least 1")
+        if self.retry_delay < 0 or not math.isfinite(self.retry_delay):
+            raise ValueError("retry_delay must be a finite non-negative number")
 
     @property
     def minimum_history(self) -> int:
@@ -264,17 +277,48 @@ def _normalise_yfinance_columns(data: pd.DataFrame, ticker: str) -> pd.DataFrame
 
 
 def _download_history(ticker: str, config: IntersectScannerConfig) -> pd.DataFrame:
-    """Download daily history for one Yahoo Finance ticker."""
+    """Download daily history for one Yahoo Finance ticker with retries.
 
-    data = yf.download(
-        ticker,
-        period=config.download_period,
-        interval="1d",
-        progress=False,
-        auto_adjust=False,
-        threads=False,
-    )
-    return _normalise_yfinance_columns(data, ticker)
+    Yahoo may throttle or return empty responses for rapid sequential requests.
+    Retry a configurable number of times with exponential backoff before giving
+    up on a symbol.
+    """
+
+    last_error: Exception | None = None
+    for attempt in range(config.max_retries):
+        try:
+            data = yf.download(
+                ticker,
+                period=config.download_period,
+                interval="1d",
+                progress=False,
+                auto_adjust=False,
+                threads=False,
+            )
+            if not data.empty:
+                return _normalise_yfinance_columns(data, ticker)
+            last_error = ValueError(f"empty price data for {ticker}")
+        except Exception as exc:
+            last_error = exc
+            logging.warning(
+                "Download attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                config.max_retries,
+                ticker,
+                exc,
+            )
+        if attempt < config.max_retries - 1:
+            backoff = config.retry_delay * (2 ** attempt)
+            time.sleep(backoff)
+
+    if last_error is not None:
+        logging.warning(
+            "All %d download attempts failed for %s: %s",
+            config.max_retries,
+            ticker,
+            last_error,
+        )
+    return pd.DataFrame()
 
 
 def evaluate_intersect_signal(
@@ -377,6 +421,9 @@ def screen_stocks_with_intersect(
                 results.append(signal)
         except Exception as exc:
             logging.warning("Error processing ticker %s: %s", ticker, exc)
+        finally:
+            if settings.request_delay > 0 and index < len(tickers):
+                time.sleep(settings.request_delay)
 
     return pd.DataFrame(results, columns=RESULT_COLUMNS)
 
@@ -405,6 +452,24 @@ def main() -> None:
         default="nifty500_xy_matrix_signals.csv",
         help="CSV path for the signal matrix.",
     )
+    parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=0.25,
+        help="Seconds to sleep between ticker downloads to avoid Yahoo throttling (default: 0.25).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Maximum download attempts per ticker before giving up (default: 3).",
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=1.0,
+        help="Base seconds for exponential backoff between retries (default: 1.0).",
+    )
     args = parser.parse_args()
 
     tickers = get_nifty500_tickers(args.input)
@@ -414,7 +479,12 @@ def main() -> None:
 
     print(f"Loaded {len(tickers)} symbols from {args.input}")
 
-    signals = screen_stocks_with_intersect(tickers)
+    config = IntersectScannerConfig(
+        request_delay=args.request_delay,
+        max_retries=args.max_retries,
+        retry_delay=args.retry_delay,
+    )
+    signals = screen_stocks_with_intersect(tickers, config)
     print("\n=== NIFTY 500 FACTOR MATRIX INTERSECT RESULTS ===")
     output_path = Path(args.output)
     if signals.empty:

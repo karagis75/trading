@@ -221,5 +221,65 @@ class Nifty500IntersectTests(unittest.TestCase):
         self.assertEqual(result["Close"].iloc[-1], data[("Close", "ABC.NS")].iloc[-1])
 
 
+    def test_download_history_retries_empty_data_and_succeeds(self) -> None:
+        config = scanner.IntersectScannerConfig(
+            max_retries=3,
+            retry_delay=0.01,
+        )
+        history = make_history(3)
+        responses = [pd.DataFrame(), history]
+
+        with patch.object(scanner.yf, "download", side_effect=responses) as download_mock:
+            result = scanner._download_history("RELIANCE.NS", config)
+
+        self.assertEqual(len(result), len(history))
+        self.assertEqual(download_mock.call_count, 2)
+
+    def test_download_history_returns_empty_after_all_retries_fail(self) -> None:
+        config = scanner.IntersectScannerConfig(
+            max_retries=2,
+            retry_delay=0.01,
+        )
+
+        with patch.object(scanner.yf, "download", return_value=pd.DataFrame()) as download_mock:
+            result = scanner._download_history("BROKEN.NS", config)
+
+        self.assertTrue(result.empty)
+        self.assertEqual(download_mock.call_count, config.max_retries)
+
+    def test_config_rejects_invalid_retry_settings(self) -> None:
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(max_retries=0)
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(request_delay=-0.1)
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(retry_delay=-0.1)
+
+    def test_screen_respects_request_delay_between_tickers(self) -> None:
+        history = make_history()
+
+        def downloader(_ticker: str, _config: scanner.IntersectScannerConfig) -> pd.DataFrame:
+            return history
+
+        config = scanner.IntersectScannerConfig(
+            request_delay=0.05,
+            fast_dma=8,
+            slow_dma=18,
+        )
+
+        with patch.object(scanner, "time") as time_mock:
+            scanner.screen_stocks_with_intersect(
+                ["A.NS", "B.NS", "C.NS"],
+                config=config,
+                downloader=downloader,
+            )
+
+        sleeps = [
+            call.args[0]
+            for call in time_mock.sleep.call_args_list
+        ]
+        self.assertEqual(sleeps, [0.05, 0.05])
+
+
 if __name__ == "__main__":
     unittest.main()

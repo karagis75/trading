@@ -358,6 +358,18 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "combinedoptionanalyzedv8.py",
             ],
         )
+        xy_job = next(job for job in jobs if job.name == "nifty500-xy-intersect")
+        self.assertEqual(
+            xy_job.args,
+            (
+                "--input",
+                "ind_nifty500list.csv",
+                "--output",
+                "outputs/{date}/nifty500_xy_matrix_signals.csv",
+                "--request-delay",
+                "0.1",
+            ),
+        )
         for job in jobs:
             self.assertTrue(
                 (runner.REPO_ROOT / job.script).exists(),
