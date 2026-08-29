@@ -13,26 +13,45 @@
   </p>
 </section>
 
+{% set role_labels = {
+  'primary_scanner': 'primary',
+  'aggregator': 'aggregator',
+  'downstream': 'downstream'
+} %}
+{% set role_css = {
+  'primary_scanner': 'role-primary',
+  'aggregator': 'role-aggregator',
+  'downstream': 'role-downstream'
+} %}
+
 <div class="scanner-list">
   {% for scanner in scanners %}
-    <article class="scanner-row {% if not scanner.job_enabled %}is-disabled{% endif %}">
-      <div>
+    <article class="scanner-row {% if not scanner.job_enabled %}is-disabled{% endif %} {% if not scanner.scan_date %}is-no-data{% endif %}">
+      <div class="scanner-info">
         <h2>
-          {% if scanner.job_enabled %}
+          {% if scanner.job_enabled and scanner.scan_date %}
             <a href="{{ url_for('scanners.scanner_latest', scanner_id=scanner.scanner_id) }}">{{ scanner.title }}</a>
           {% else %}
             {{ scanner.title }}
           {% endif %}
         </h2>
-        <p class="muted">{{ scanner.scanner_id }} · {{ scanner.role or 'scanner' }}</p>
+        <p class="scanner-sub muted">
+          {{ scanner.scanner_id }}
+          <span class="role-pill {{ role_css.get(scanner.role, 'role-primary') }}">{{ role_labels.get(scanner.role, scanner.role) }}</span>
+        </p>
       </div>
       <div class="scanner-meta">
         <span class="status-pill {{ scanner.status_css }}">{{ scanner.status or 'no run' }}</span>
         {% if scanner.scan_date %}
-          <span class="muted">{{ scanner.scan_date }}</span>
-        {% endif %}
-        {% if scanner.result_count is not none %}
-          <span class="count">{{ scanner.result_count }} hits</span>
+          <span class="muted mono">{{ scanner.scan_date }}</span>
+          {% if scanner.result_count is not none %}
+            <span class="count">{{ scanner.result_count }} hit{{ 's' if scanner.result_count != 1 else '' }}</span>
+          {% endif %}
+          {% if scanner.error_message %}
+            <span class="muted small-text" title="{{ scanner.error_message }}">⚠ {{ scanner.error_message[:60] }}{% if scanner.error_message|length > 60 %}…{% endif %}</span>
+          {% endif %}
+        {% else %}
+          <span class="muted small-text">Not yet run</span>
         {% endif %}
       </div>
     </article>

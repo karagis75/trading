@@ -244,7 +244,7 @@ class DashboardHarness(unittest.TestCase):
         found = self.client.get("/stocks/TCS")
         self.assertEqual(found.status_code, 200)
         self.assertIn(b"Summary across scanners", found.data)
-        self.assertIn(b"History", found.data)
+        self.assertIn(b"Membership history", found.data)
 
         missing = self.client.get("/stocks/INFY")
         self.assertEqual(missing.status_code, 200)

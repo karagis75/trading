@@ -23,22 +23,24 @@
         <thead>
           <tr>
             <th>Scanner</th>
+            <th>Role</th>
             <th>Change</th>
             <th>Picked</th>
             <th>Classification</th>
-            <th>Confidence</th>
+            <th>Confidence / Score</th>
             <th>Streak</th>
             <th>Total picks</th>
           </tr>
         </thead>
         <tbody>
           {% for row in summary %}
-            <tr>
+            <tr class="{% if not row.picked %}is-no-pick{% endif %}">
               <td>
                 <a href="{{ url_for('scanners.scanner_latest', scanner_id=row.scanner_id) }}">{{ row.title }}</a>
               </td>
+              <td><span class="role-pill role-{{ row.role or 'primary_scanner' | replace('_scanner','') }}">{{ row.role or 'primary' }}</span></td>
               <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
-              <td>{{ 'Yes' if row.picked else 'No' }}</td>
+              <td>{% if row.picked %}<span class="bool-true">✓</span>{% else %}<span class="bool-false">—</span>{% endif %}</td>
               <td>{{ row.classification or '—' }}</td>
               <td>{{ row.confidence if row.confidence is not none else '—' }}</td>
               <td>{{ row.current_streak_scans or 0 }}</td>
@@ -52,8 +54,8 @@
 
   <section class="panel">
     <div class="panel-head">
-      <h2>History · last {{ matrix.dates|length }} scan day(s)</h2>
-      <p class="muted">Shows whether {{ symbol }} was added, re-added, continued, or dropped in each scanner.</p>
+      <h2>Membership history · last {{ matrix.dates|length }} scan day(s)</h2>
+      <p class="muted">Was <strong>{{ symbol }}</strong> added, re-added, continued, or dropped in each scanner?</p>
     </div>
     {% if matrix.dates %}
       <div class="table-shell matrix-shell">
@@ -62,14 +64,16 @@
             <tr>
               <th>Date</th>
               {% for scanner in matrix.scanners %}
-                <th title="{{ scanner.scanner_id }}">{{ scanner.title }}</th>
+                <th>
+                  <a href="{{ url_for('scanners.scanner_latest', scanner_id=scanner.scanner_id) }}" title="{{ scanner.scanner_id }}">{{ scanner.title }}</a>
+                </th>
               {% endfor %}
             </tr>
           </thead>
           <tbody>
             {% for day in matrix.dates %}
               <tr>
-                <td><strong>{{ day }}</strong></td>
+                <td><strong class="mono">{{ day }}</strong></td>
                 {% for scanner in matrix.scanners %}
                   {% set cell = matrix.cells.get(day, {}).get(scanner.scanner_id) %}
                   <td>

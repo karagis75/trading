@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, abort, redirect, render_template, url_for
+from flask import Blueprint, abort, redirect, render_template, request, url_for
 
 from ..helpers import (
     build_table_columns,
@@ -45,7 +45,6 @@ def scanner_latest(scanner_id: str):
     connection = get_db()
     dates = queries.scanner_dates(connection, scanner_id, limit=1)
     if not dates:
-        # Fall back to the scanner index with a flash-like empty page.
         return render_template(
             "scanners/day.html",
             scanner_id=scanner_id,
@@ -59,6 +58,9 @@ def scanner_latest(scanner_id: str):
             status=None,
             status_css="status-missing",
             empty_reason="No scan history for this scanner yet.",
+            stock_filter="",
+            has_validation=False,
+            is_downstream=False,
         )
     return redirect(url_for("scanners.scanner_day", scanner_id=scanner_id, scan_date=dates[0]))
 
@@ -71,19 +73,28 @@ def scanner_day(scanner_id: str, scan_date: str):
     if scanner_id not in known:
         abort(404)
 
+    # Optional stock filter — preserved across date navigation via URL param.
+    stock_filter = (request.args.get("stock") or "").strip().upper()
+
     dates = queries.scanner_dates(connection, scanner_id, limit=6)
     run = queries.scanner_day_run(connection, scanner_id, scan_date)
     title = display_name_for(scanner_id, (run or {}).get("display_name"))
     status = (run or {}).get("status")
+    is_downstream = (run.get("role") if run else None) == "downstream"
+
     rows = queries.scanner_day_rows(connection, scanner_id, scan_date) if run and status == "success" else []
-    columns = build_table_columns(scanner_id, rows) if rows else preferred_fallback(scanner_id)
+    columns = build_table_columns(scanner_id, rows) if rows else _preferred_fallback(scanner_id)
+
     table_rows = []
+    has_validation = False
     for row in rows:
         badge = change_badge(row.get("change_type"), row.get("current_streak_scans"))
         failed = validation_failed(row)
+        if failed is not None:
+            has_validation = True
         table_rows.append(
             {
-                "symbol": row.get("symbol"),
+                "symbol": row.get("symbol") or "",
                 "badge": badge,
                 "cells": row_cells(row, columns),
                 "picked": bool(row.get("picked")),
@@ -107,16 +118,18 @@ def scanner_day(scanner_id: str, scan_date: str):
         dates=dates,
         run=run,
         rows=rows,
+        row_count=len(table_rows),
         columns=columns,
         table_rows=table_rows,
         status=status,
         status_css=status_css(status),
         empty_reason=empty_reason,
+        stock_filter=stock_filter,
+        has_validation=has_validation,
+        is_downstream=is_downstream,
     )
 
 
-def preferred_fallback(scanner_id: str) -> list[str]:
+def _preferred_fallback(scanner_id: str) -> list[str]:
     from ..config import preferred_columns
-
-    columns = preferred_columns(scanner_id)
-    return columns or ["Ticker"]
+    return preferred_columns(scanner_id) or ["Ticker"]

@@ -275,25 +275,42 @@ def scanner_day_rows(
     if not run or not run.get("run_id"):
         return []
     run_id = run["run_id"]
-    daily = _rows(
-        connection,
-        """
-        SELECT *
-        FROM stock_scanner_daily
-        WHERE run_id = ? AND scanner_id = ?
-          AND (picked = 1 OR change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
-        ORDER BY
-            CASE change_type
-                WHEN 'ADDED' THEN 0
-                WHEN 'READED' THEN 1
-                WHEN 'CONTINUED' THEN 2
-                WHEN 'DROPPED' THEN 3
-                ELSE 4
-            END,
-            symbol
-        """,
-        (run_id, scanner_id),
-    )
+    # For downstream scanners (e.g. combined-option-v8) every opportunity row is
+    # relevant — order by score descending so best scores appear first.
+    # For primary scanners keep the change-type ordering (ADDED first) then alpha.
+    is_downstream = (run.get("role") or "primary_scanner") == "downstream"
+    if is_downstream:
+        daily = _rows(
+            connection,
+            """
+            SELECT d.*
+            FROM stock_scanner_daily d
+            WHERE d.run_id = ? AND d.scanner_id = ?
+              AND (d.picked = 1 OR d.change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
+            ORDER BY COALESCE(d.confidence, 0) DESC, d.symbol
+            """,
+            (run_id, scanner_id),
+        )
+    else:
+        daily = _rows(
+            connection,
+            """
+            SELECT *
+            FROM stock_scanner_daily
+            WHERE run_id = ? AND scanner_id = ?
+              AND (picked = 1 OR change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
+            ORDER BY
+                CASE change_type
+                    WHEN 'ADDED' THEN 0
+                    WHEN 'READED' THEN 1
+                    WHEN 'CONTINUED' THEN 2
+                    WHEN 'DROPPED' THEN 3
+                    ELSE 4
+                END,
+                symbol
+            """,
+            (run_id, scanner_id),
+        )
     details = _rows(
         connection,
         """
