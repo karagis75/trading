@@ -13,8 +13,10 @@
   --success: #3fa36c;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
   --radius: 14px;
-  --font: "IBM Plex Sans", "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* System font stack — renders instantly, no external network request. */
+  --font: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "Consolas", "Menlo", "Liberation Mono", monospace;
 }
 
 * { box-sizing: border-box; }

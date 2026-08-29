@@ -12,6 +12,7 @@ from ..helpers import (
     normalize_ticker,
     queries,
 )
+from ..perf import HISTORICAL_TTL, LIVE_TTL, SHORT_TTL, cached
 
 stocks_bp = Blueprint("stocks", __name__, url_prefix="/stocks")
 
@@ -20,13 +21,17 @@ stocks_bp = Blueprint("stocks", __name__, url_prefix="/stocks")
 def stock_search():
     connection = get_db()
     query = (request.args.get("q") or "").strip()
-    results = queries.search_stocks(connection, query) if query else []
-    return render_template(
-        "stocks/search.html",
-        query=query,
-        results=results,
-        latest_date=queries.latest_scan_date(connection),
+    results = (
+        cached(
+            f"stock_search:{query.upper()}",
+            LIVE_TTL,
+            lambda: queries.search_stocks(connection, query),
+        )
+        if query
+        else []
     )
+    latest = cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
+    return render_template("stocks/search.html", query=query, results=results, latest_date=latest)
 
 
 @stocks_bp.route("/<symbol>")
@@ -34,9 +39,13 @@ def stock_detail(symbol: str):
     connection = get_db()
     cfg = get_config()
     ticker = normalize_ticker(symbol)
-    latest = queries.latest_scan_date(connection)
-    found = queries.stock_in_any_scanner(connection, ticker)
-    info = queries.stock_info(connection, ticker)
+    latest = cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
+    found = cached(
+        f"stock_in_any:{ticker}",
+        LIVE_TTL,
+        lambda: queries.stock_in_any_scanner(connection, ticker),
+    )
+    info = cached(f"stock_info:{ticker}", HISTORICAL_TTL, lambda: queries.stock_info(connection, ticker))
 
     if not found:
         return render_template(
@@ -50,8 +59,11 @@ def stock_detail(symbol: str):
             error_message=f"{ticker} was not found in any scanner results.",
         )
 
-    summary_rows = queries.stock_summary(connection, ticker, as_of=latest)
-    # Ensure every configured job appears, even if missing for the day.
+    summary_rows = cached(
+        f"stock_summary:{ticker}:{latest}",
+        SHORT_TTL,
+        lambda: queries.stock_summary(connection, ticker, as_of=latest),
+    )
     by_scanner = {row["scanner_id"]: row for row in summary_rows}
     summary = []
     for job in cfg.jobs:
@@ -67,20 +79,21 @@ def stock_detail(symbol: str):
         payload["badge"] = change_badge(payload.get("change_type"), payload.get("current_streak_scans"))
         summary.append(payload)
 
-    matrix = queries.stock_change_matrix(connection, ticker, days=6)
-    # Attach display titles + badges for template convenience.
+    raw_matrix = cached(
+        f"stock_matrix:{ticker}",
+        SHORT_TTL,
+        lambda: queries.stock_change_matrix(connection, ticker, days=6),
+    )
     matrix_scanners = []
-    for scanner in matrix["scanners"]:
+    for scanner in raw_matrix["scanners"]:
         payload = dict(scanner)
         payload["title"] = display_name_for(payload["scanner_id"], payload.get("display_name"))
         matrix_scanners.append(payload)
-    # Prefer jobs.json order for matrix columns.
-    job_order = [job.name for job in cfg.jobs]
-    order_index = {name: idx for idx, name in enumerate(job_order)}
-    matrix_scanners.sort(key=lambda row: order_index.get(row["scanner_id"], 999))
+    job_order = {name: idx for idx, name in enumerate(job.name for job in cfg.jobs)}
+    matrix_scanners.sort(key=lambda row: job_order.get(row["scanner_id"], 999))
 
     matrix_cells: dict[str, dict[str, dict]] = {}
-    for day, by_id in matrix["cells"].items():
+    for day, by_id in raw_matrix["cells"].items():
         matrix_cells[day] = {}
         for scanner_id, cell in by_id.items():
             payload = dict(cell)
@@ -95,7 +108,7 @@ def stock_detail(symbol: str):
         latest_date=latest,
         summary=summary,
         matrix={
-            "dates": matrix["dates"],
+            "dates": raw_matrix["dates"],
             "scanners": matrix_scanners,
             "cells": matrix_cells,
         },
