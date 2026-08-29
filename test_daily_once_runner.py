@@ -350,6 +350,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "bearisbiasnifty500.py",
                 "nifty500_xy_intersect.py",
                 "rangeboundstocks.py",
+                "nimblr_minervini_cpr_scanner.py",
                 "merge_ticker_candidates.py",
                 "combinedoptionanalyzedv8.py",
             ],

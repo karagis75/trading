@@ -47,6 +47,17 @@
       ]
     },
     {
+      "name": "nimblr-minervini-cpr",
+      "enabled": true,
+      "script": "nimblr_minervini_cpr_scanner.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "outputs/{date}/Nimblr_Minervini_CPR_Scan.xlsx"
+      ]
+    },
+    {
       "name": "merge-option-candidates",
       "enabled": true,
       "script": "merge_ticker_candidates.py",
