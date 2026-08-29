@@ -11,7 +11,14 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Bullish_Bias_Analysis.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "classification_column": "Status"
+      }
     },
     {
       "name": "bearish-bias-nifty500",
@@ -22,7 +29,14 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Bearish_Momentum_Analysis.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "classification_column": "Setup Status"
+      }
     },
     {
       "name": "nifty500-xy-intersect",
@@ -33,7 +47,14 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/nifty500_xy_matrix_signals.csv"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "csv",
+        "symbol_column": "Ticker",
+        "classification_column": "X/Y Intersect Rule"
+      }
     },
     {
       "name": "rangebound-stocks",
@@ -44,7 +65,14 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Strangle_Candidate_Analysis.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "classification_column": "Setup Status"
+      }
     },
     {
       "name": "nimblr-minervini-cpr",
@@ -55,7 +83,15 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Nimblr_Minervini_CPR_Scan.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "membership_filter": "Qualified=True",
+        "signal_date_column": "Date"
+      }
     },
     {
       "name": "nifty-fib-pinball-bullish",
@@ -66,7 +102,17 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Bullish_Fib_Pinball.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "sheet": "All",
+        "symbol_column": "Ticker",
+        "signal_date_column": "Last Date",
+        "classification_column": "Wave Position",
+        "confidence_column": "Confidence"
+      }
     },
     {
       "name": "nifty-fib-pinball-bearish",
@@ -77,7 +123,17 @@
         "ind_nifty500list.csv",
         "--output",
         "outputs/{date}/Bearish_Fib_Pinball.xlsx"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "sheet": "All",
+        "symbol_column": "Ticker",
+        "signal_date_column": "Last Date",
+        "classification_column": "Wave Position",
+        "confidence_column": "Confidence"
+      }
     },
     {
       "name": "merge-option-candidates",
@@ -90,7 +146,13 @@
         "outputs/{date}/Strangle_Candidate_Analysis.xlsx",
         "--output",
         "outputs/{date}/Option_Scan_Candidates.csv"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "aggregator",
+        "format": "csv",
+        "symbol_column": "Ticker"
+      }
     },
     {
       "name": "combined-option-v8",
@@ -108,7 +170,16 @@
         "1.5",
         "--max-retries",
         "6"
-      ]
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "downstream",
+        "format": "xlsx",
+        "sheet": "All Opportunities",
+        "symbol_column": "Symbol",
+        "classification_column": "Strategy",
+        "confidence_column": "Score"
+      }
     }
   ]
 }

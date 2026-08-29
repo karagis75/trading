@@ -6,8 +6,7 @@ technical scanners (bullishbiasnifty500.py, bearisbiasnifty500.py,
 rangeboundstocks.py) already flagged for the day, instead of re-scanning the
 full NIFTY 500 list.
 
-A source scanner writes nothing when it finds zero qualifying setups, so a
-missing source file here means "no candidates from that scan", not an error.
+A source scanner writes a header-only file when it finds zero qualifying setups.
 """
 
 from __future__ import annotations
