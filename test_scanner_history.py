@@ -45,6 +45,15 @@ class FakePostgresConnection:
         self.executed.append((sql, tuple(params)))
         return self
 
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
     def commit(self):
         pass
 
