@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from scanner_history import db
 from scanner_history.adapters import parse_scanner_output
 from scanner_history.normalize import normalize_symbol
 from scanner_history.queries import active, changes, stock_history
@@ -30,6 +31,43 @@ def write_universe(path: Path, tickers: list[str]) -> None:
             "ISIN Code": [f"INE{i:08d}" for i in range(len(tickers))],
         }
     ).to_csv(path, index=False)
+
+
+class FakePostgresConnection:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, tuple]] = []
+
+    def execute(self, sql, params=()):
+        self.executed.append((sql, params))
+        return self
+
+    def executemany(self, sql, params):
+        self.executed.append((sql, tuple(params)))
+        return self
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class DatabaseCompatibilityTests(unittest.TestCase):
+    def test_postgres_wrapper_translates_sqlite_placeholders(self) -> None:
+        fake = FakePostgresConnection()
+        connection = db.PostgresConnection(fake)
+
+        connection.execute("SELECT * FROM stocks WHERE symbol = ?", ("TCS",))
+        connection.executemany(
+            "INSERT INTO stocks(symbol, industry) VALUES (?, ?)",
+            [("TCS", "IT")],
+        )
+
+        self.assertEqual(fake.executed[0][0], "SELECT * FROM stocks WHERE symbol = %s")
+        self.assertEqual(
+            fake.executed[1][0],
+            "INSERT INTO stocks(symbol, industry) VALUES (%s, %s)",
+        )
 
 
 def write_hits(path: Path, tickers: list[str], sheet: str | None = None) -> None:
