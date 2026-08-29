@@ -25,29 +25,21 @@ scanners_bp = Blueprint("scanners", __name__, url_prefix="/scanners")
 def scanner_index():
     connection = get_db()
     cfg = get_config()
+    jobs_by_name = {job.name: job for job in cfg.jobs}
     scanners = cached(
         "scanner_index",
         LIVE_TTL,
-        lambda: _build_scanner_index(connection, cfg),
+        lambda: enrich_scanner_index(
+            queries.scanner_index(connection),
+            [job.name for job in cfg.jobs],
+            jobs_by_name,
+        ),
     )
     return render_template(
         "scanners/index.html",
         scanners=scanners,
         latest_date=cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection)),
     )
-
-
-def _build_scanner_index(connection, cfg):
-    scanners = enrich_scanner_index(
-        queries.scanner_index(connection),
-        [job.name for job in cfg.jobs],
-    )
-    jobs_by_name = {job.name: job for job in cfg.jobs}
-    for row in scanners:
-        job = jobs_by_name.get(row["scanner_id"])
-        row["job_enabled"] = job.enabled if job else bool(row.get("enabled", 1))
-        row["role"] = row.get("role") or (job.role if job else "primary_scanner")
-    return scanners
 
 
 @scanners_bp.route("/<scanner_id>")

@@ -216,10 +216,20 @@ class DashboardHarness(unittest.TestCase):
         self.assertIn(b"Scanner View", home.data)
         self.assertIn(b"Stock View", home.data)
         self.assertIn(self.days[-1].isoformat().encode(), home.data)
+        self.assertIn(b"/scanners/bullish-bias-nifty500", home.data)
 
         index = self.client.get("/scanners/")
         self.assertEqual(index.status_code, 200)
         self.assertIn(b"bullish-bias-nifty500", index.data)
+        latest_day = self.days[-1].isoformat()
+        self.assertIn(
+            f'/scanners/bullish-bias-nifty500/{latest_day}'.encode(),
+            index.data,
+        )
+        self.assertIn(
+            f'/scanners/bearish-bias-nifty500/{latest_day}'.encode(),
+            index.data,
+        )
 
         latest = self.client.get("/scanners/bullish-bias-nifty500")
         self.assertEqual(latest.status_code, 302)

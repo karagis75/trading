@@ -135,6 +135,12 @@ main.wrap { padding: 2rem 0 3rem; }
   border-radius: 10px;
   background: var(--bg-soft);
   border: 1px solid var(--border);
+  color: inherit;
+  text-decoration: none;
+}
+.health-item:hover {
+  border-color: var(--accent);
+  text-decoration: none;
 }
 .status-dot {
   width: 0.65rem;

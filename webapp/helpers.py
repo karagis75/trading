@@ -139,24 +139,35 @@ def status_css(status: str | None) -> str:
     }.get(str(status or "").lower(), "status-missing")
 
 
-def enrich_scanner_index(rows: list[dict[str, Any]], jobs_order: list[str]) -> list[dict[str, Any]]:
+def enrich_scanner_index(
+    rows: list[dict[str, Any]],
+    jobs_order: list[str],
+    jobs_by_name: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     by_id = {row["scanner_id"]: row for row in rows}
+    jobs_by_name = jobs_by_name or {}
     ordered: list[dict[str, Any]] = []
     seen: set[str] = set()
     for scanner_id in jobs_order:
         row = dict(by_id.get(scanner_id) or {"scanner_id": scanner_id, "enabled": 1})
-        row["title"] = display_name_for(scanner_id, row.get("display_name"))
-        row["status_css"] = status_css(row.get("status"))
+        _decorate_scanner_row(row, jobs_by_name.get(scanner_id))
         ordered.append(row)
         seen.add(scanner_id)
     for scanner_id, row in by_id.items():
         if scanner_id in seen:
             continue
         payload = dict(row)
-        payload["title"] = display_name_for(scanner_id, payload.get("display_name"))
-        payload["status_css"] = status_css(payload.get("status"))
+        _decorate_scanner_row(payload, jobs_by_name.get(scanner_id))
         ordered.append(payload)
     return ordered
+
+
+def _decorate_scanner_row(row: dict[str, Any], job: Any | None) -> None:
+    scanner_id = row["scanner_id"]
+    row["title"] = display_name_for(scanner_id, row.get("display_name"))
+    row["status_css"] = status_css(row.get("status"))
+    row["job_enabled"] = job.enabled if job is not None else bool(row.get("enabled", 1))
+    row["role"] = row.get("role") or (job.role if job is not None else "primary_scanner")
 
 
 def normalize_ticker(symbol: str) -> str:
