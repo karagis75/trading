@@ -110,7 +110,7 @@
   var reset  = document.getElementById('filter-reset');
   if (!input || !table) return;
 
-  function applyFilter(value) {
+  function applyFilter(value, updateUrl) {
     var needle = value.trim().toUpperCase();
     var rows = table.querySelectorAll('tbody tr');
     var visible = 0;
@@ -127,13 +127,34 @@
       nomatch.hidden = visible > 0 || !needle;
       if (term) term.textContent = value.trim();
     }
+    // Keep date-chip hrefs in sync so the filter is preserved across date navigation.
+    var chips = document.querySelectorAll('.date-chip');
+    chips.forEach(function (chip) {
+      var url = new URL(chip.href, location.href);
+      if (needle) {
+        url.searchParams.set('stock', needle);
+      } else {
+        url.searchParams.delete('stock');
+      }
+      chip.href = url.pathname + (url.search ? url.search : '');
+    });
+    // Also update the page URL so refresh restores the filter.
+    if (updateUrl && history.replaceState) {
+      var pageUrl = new URL(location.href);
+      if (needle) {
+        pageUrl.searchParams.set('stock', needle);
+      } else {
+        pageUrl.searchParams.delete('stock');
+      }
+      history.replaceState(null, '', pageUrl.pathname + (pageUrl.search ? pageUrl.search : ''));
+    }
   }
 
   // Apply initial value (from URL param pre-fill).
-  applyFilter(input.value);
+  applyFilter(input.value, false);
 
-  input.addEventListener('input', function () { applyFilter(this.value); });
-  input.addEventListener('search', function () { applyFilter(this.value); }); // clear button
+  input.addEventListener('input', function () { applyFilter(this.value, true); });
+  input.addEventListener('search', function () { applyFilter(this.value, true); }); // clear button
 
   if (reset) {
     reset.addEventListener('click', function () {
