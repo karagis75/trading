@@ -154,6 +154,28 @@ def load_tickers(input_path: str) -> list[str]:
     return df_input["Ticker"].dropna().astype(str).str.strip().tolist()
 
 
+RANGEBOUND_RESULT_COLUMNS = [
+    "Ticker",
+    "Close Price",
+    "ADX (14)",
+    "CCI (14)",
+    "EMA Braid Spread %",
+    "Box Range %",
+    "Box High",
+    "Box Low",
+    "Setup Status",
+]
+
+
+def write_results(df: pd.DataFrame, path: str | Path) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.suffix.lower() == ".csv":
+        df.to_csv(destination, index=False)
+        return
+    df.to_excel(destination, index=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Scan tickers from CSV or Excel for Long Strangle Compression Setups.")
     parser.add_argument("--input", default="NSE_Stocks_List_20251230_1617.xlsx", help="Path to input .csv or Excel file.")
@@ -176,18 +198,15 @@ def main() -> None:
         if data:
             results.append(data)
 
+    output_path = Path(args.output)
     if not results:
         print("No qualifying strangle compression setups found.")
+        write_results(pd.DataFrame(columns=RANGEBOUND_RESULT_COLUMNS), output_path)
+        print(f"Scan complete. Found 0 strangle candidate(s). Saved to '{output_path}'.")
         return
 
-    output_path = Path(args.output)
     df_results = pd.DataFrame(results).sort_values(by=["ADX (14)", "EMA Braid Spread %"], ascending=True)
-
-    if output_path.suffix.lower() == ".csv":
-        df_results.to_csv(output_path, index=False)
-    else:
-        df_results.to_excel(output_path, index=False)
-
+    write_results(df_results, output_path)
     print(f"Scan complete. Found {len(results)} strangle candidate(s). Saved to '{output_path}'.")
 
 

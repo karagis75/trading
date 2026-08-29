@@ -1515,7 +1515,10 @@ def analyze_symbol(
 
 def write_results(results: list[dict[str, Any]], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame(results).sort_values(["Score", "R:R Ratio"], ascending=False)
+    if results:
+        df = pd.DataFrame(results).sort_values(["Score", "R:R Ratio"], ascending=False)
+    else:
+        df = pd.DataFrame(columns=["Symbol", "Strategy", "Score", "R:R Ratio", "Validation Pass"])
 
     if output_path.suffix.lower() == ".csv":
         df.to_csv(output_path, index=False)
@@ -1689,6 +1692,9 @@ def main() -> None:
 
     if not results:
         print("No qualifying spread opportunities found.")
+        output_path = Path(args.output)
+        write_results(results, output_path)
+        print(f"Analysis completed. Output saved to '{output_path}'.")
         return
 
     output_path = Path(args.output)

@@ -1,6 +1,10 @@
 # Scheduler runtime files — do not commit per-machine run state.
 scheduler/state/
 scheduler/logs/
+scanner_history/*.sqlite3
+scanner_history/*.sqlite3-journal
+scanner_history/*.sqlite3-wal
+scanner_history/*.sqlite3-shm
 __pycache__/
 *.pyc
 .pytest_cache/

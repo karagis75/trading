@@ -94,6 +94,7 @@ class JobSpecTests(unittest.TestCase):
     def test_skip_if_empty_input_defaults_to_false(self) -> None:
         job = runner.JobSpec.from_dict({"name": "x", "script": "x.py"})
         self.assertFalse(job.skip_if_empty_input)
+        self.assertFalse(job.tracking.enabled)
 
     def test_expanded_args_use_iso_date_folder(self) -> None:
         job = runner.JobSpec(

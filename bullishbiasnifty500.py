@@ -292,6 +292,7 @@ def extract_tickers(df: pd.DataFrame) -> list[str]:
 def write_results(df: pd.DataFrame, path: str | Path, engine: str | None = None) -> None:
     """Write scan results using a CSV writer or an explicit Excel engine."""
     destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     requested = (engine or "").strip().lower() or None
     suffix = destination.suffix.lower()
 
@@ -301,6 +302,21 @@ def write_results(df: pd.DataFrame, path: str | Path, engine: str | None = None)
 
     excel_engine = excel_engine_for_path(destination, requested, mode="writer") or "openpyxl"
     df.to_excel(destination, index=False, engine=excel_engine)
+
+
+BULLISH_RESULT_COLUMNS = [
+    "Ticker",
+    "Close Price",
+    "EMA9",
+    "EMA18",
+    "EMA50",
+    "EMA200",
+    "CCI",
+    "ADX",
+    "Aggressive SL (18 EMA)",
+    "Swing SL (50 EMA)",
+    "Status",
+]
 
 
 def main() -> None:
@@ -334,11 +350,13 @@ def main() -> None:
         if data:
             results.append(data)
 
+    output_path = Path(args.output)
     if not results:
         print("No qualifying bullish setups found.")
+        write_results(pd.DataFrame(columns=BULLISH_RESULT_COLUMNS), output_path)
+        print(f"Scan complete. Found 0 bullish setup(s). Saved to '{output_path}'.")
         return
 
-    output_path = Path(args.output)
     df_results = pd.DataFrame(results).sort_values(by=["ADX", "CCI"], ascending=False)
     write_results(df_results, output_path)
 

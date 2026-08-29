@@ -26,6 +26,8 @@ DEFAULT_JOBS_PATH = SCHEDULER_DIR / "jobs.json"
 DEFAULT_STATE_PATH = SCHEDULER_DIR / "state" / "run-state.json"
 DEFAULT_LOCK_PATH = SCHEDULER_DIR / "state" / "run.lock"
 DEFAULT_LOG_DIR = SCHEDULER_DIR / "logs"
+DEFAULT_HISTORY_DB = REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"
+DEFAULT_UNIVERSE_PATH = REPO_ROOT / "ind_nifty500list.csv"
 
 STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
@@ -98,6 +100,36 @@ class FileLock:
 
 
 @dataclass(frozen=True)
+class TrackingSpec:
+    enabled: bool = False
+    role: str = "primary_scanner"
+    format: str = "xlsx"
+    sheet: str | None = None
+    symbol_column: str = "Ticker"
+    membership_filter: str | None = None
+    signal_date_column: str | None = None
+    classification_column: str | None = None
+    confidence_column: str | None = None
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "TrackingSpec":
+        if not isinstance(raw, dict) or not raw:
+            return cls()
+        sheet = raw.get("sheet")
+        return cls(
+            enabled=bool(raw.get("enabled", False)),
+            role=str(raw.get("role") or "primary_scanner"),
+            format=str(raw.get("format") or "xlsx"),
+            sheet=None if sheet in (None, "", "null") else str(sheet),
+            symbol_column=str(raw.get("symbol_column") or "Ticker"),
+            membership_filter=raw.get("membership_filter"),
+            signal_date_column=raw.get("signal_date_column"),
+            classification_column=raw.get("classification_column"),
+            confidence_column=raw.get("confidence_column"),
+        )
+
+
+@dataclass(frozen=True)
 class JobSpec:
     name: str
     script: str
@@ -105,6 +137,7 @@ class JobSpec:
     enabled: bool = True
     timeout_seconds: float | None = None
     skip_if_empty_input: bool = False
+    tracking: TrackingSpec = field(default_factory=TrackingSpec)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "JobSpec":
@@ -122,6 +155,7 @@ class JobSpec:
             enabled=bool(raw.get("enabled", True)),
             timeout_seconds=float(timeout) if timeout is not None else None,
             skip_if_empty_input=bool(raw.get("skip_if_empty_input", False)),
+            tracking=TrackingSpec.from_dict(raw.get("tracking")),
         )
 
     @property
@@ -129,6 +163,14 @@ class JobSpec:
         """Value passed after '--input' in args, if any."""
         for flag, value in zip(self.args, self.args[1:]):
             if flag == "--input":
+                return value
+        return None
+
+    @property
+    def output_path(self) -> str | None:
+        """Value passed after '--output' in args, if any."""
+        for flag, value in zip(self.args, self.args[1:]):
+            if flag == "--output":
                 return value
         return None
 
@@ -237,6 +279,10 @@ class DailyOnceRunner:
         now_fn: Callable[[], datetime] | None = None,
         job_executor: Callable[[JobSpec], JobResult] | None = None,
         lock_factory: Callable[[Path], FileLock] | None = None,
+        history_db: Path | None = None,
+        universe_path: Path | None = None,
+        tracker: Any = None,
+        write_history_report: bool = True,
     ) -> None:
         self.repo_root = repo_root
         self.jobs = list(jobs)
@@ -247,6 +293,11 @@ class DailyOnceRunner:
         self.now_fn = now_fn or datetime.now
         self.job_executor = job_executor or self._execute_job
         self.lock_factory = lock_factory or FileLock
+        self.history_db = Path(history_db) if history_db else repo_root / "scanner_history" / "scanner_history.sqlite3"
+        self.universe_path = Path(universe_path) if universe_path else repo_root / "ind_nifty500list.csv"
+        self._injected_tracker = tracker
+        self._live_tracker = None
+        self.write_history_report = write_history_report
 
     def run(self, force: bool = False) -> RunReport:
         today = self.today_fn()
@@ -280,7 +331,14 @@ class DailyOnceRunner:
             )
 
         try:
-            results = [self.job_executor(job) for job in self.jobs if job.enabled]
+            results: list[JobResult] = []
+            for job in self.jobs:
+                if not job.enabled:
+                    continue
+                result = self.job_executor(job)
+                self._ingest_history(job, result, today)
+                results.append(result)
+            self._write_membership_report(today)
             failed = [job for job in results if not job.ok]
             if failed:
                 names = ", ".join(job.name for job in failed)
@@ -304,6 +362,73 @@ class DailyOnceRunner:
             return report
         finally:
             lock.release()
+
+    def _get_tracker(self):
+        if self._injected_tracker is not None:
+            return self._injected_tracker
+        from scanner_history.tracker import MembershipTracker
+
+        if self._live_tracker is None:
+            self._live_tracker = MembershipTracker.from_path(self.history_db, self.universe_path)
+        return self._live_tracker
+
+    def _tracking_config(self, job: JobSpec):
+        from scanner_history.tracker import TrackingConfig
+
+        spec = job.tracking
+        return TrackingConfig(
+            enabled=spec.enabled,
+            role=spec.role,
+            format=spec.format,
+            sheet=spec.sheet,
+            symbol_column=spec.symbol_column,
+            membership_filter=spec.membership_filter,
+            signal_date_column=spec.signal_date_column,
+            classification_column=spec.classification_column,
+            confidence_column=spec.confidence_column,
+        )
+
+    def _ingest_history(self, job: JobSpec, result: JobResult, scan_date: date) -> None:
+        if not job.tracking.enabled:
+            return
+        template = job.output_path
+        if not template:
+            LOGGER.warning("Tracking enabled for %s but job has no --output path.", job.name)
+            return
+        output_path = self._resolve_path(template.replace("{date}", scan_date.isoformat()))
+        try:
+            ingest = self._get_tracker().ingest_output(
+                scanner_id=job.name,
+                tracking=self._tracking_config(job),
+                scan_date=scan_date,
+                output_path=output_path,
+                job_ok=result.returncode == 0 and not result.skipped,
+                skipped=result.skipped,
+                job_message=result.message,
+            )
+            LOGGER.info(
+                "History ingest %s: status=%s hits=%s",
+                job.name,
+                ingest.status,
+                ingest.result_count,
+            )
+        except Exception:
+            LOGGER.exception("Failed to ingest scanner history for %s", job.name)
+
+    def _write_membership_report(self, scan_date: date) -> None:
+        if not self.write_history_report:
+            return
+        if not any(job.tracking.enabled for job in self.jobs if job.enabled):
+            return
+        try:
+            from scanner_history.report import write_daily_report
+
+            destination = self.repo_root / "outputs" / scan_date.isoformat() / "Scanner_Membership_Changes.xlsx"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            write_daily_report(self._get_tracker().connection, destination, scan_date)
+            LOGGER.info("Wrote membership report to %s", destination)
+        except Exception:
+            LOGGER.exception("Failed to write scanner membership report")
 
     def _resolve_path(self, raw_path: str) -> Path:
         path = Path(raw_path).expanduser()

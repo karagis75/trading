@@ -381,6 +381,13 @@ def screen_stocks_with_intersect(
     return pd.DataFrame(results, columns=RESULT_COLUMNS)
 
 
+def write_signals_csv(path: str | Path, signals: pd.DataFrame) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    frame = signals if not signals.empty else pd.DataFrame(columns=RESULT_COLUMNS)
+    frame.to_csv(destination, index=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Scan NIFTY 500 stocks for X/Y intersect entry and exit signals."
@@ -409,15 +416,17 @@ def main() -> None:
 
     signals = screen_stocks_with_intersect(tickers)
     print("\n=== NIFTY 500 FACTOR MATRIX INTERSECT RESULTS ===")
+    output_path = Path(args.output)
     if signals.empty:
         print("No NIFTY 500 stocks met your rule configurations today.")
+        write_signals_csv(output_path, signals)
+        print(f"\nMatrix successfully saved to '{output_path}'")
         return
 
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 1000)
     print(signals.to_string(index=False))
-    output_path = Path(args.output)
-    signals.to_csv(output_path, index=False)
+    write_signals_csv(output_path, signals)
     print(f"\nMatrix successfully saved to '{output_path}'")
 
 
