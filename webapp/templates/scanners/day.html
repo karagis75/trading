@@ -8,7 +8,11 @@
     {% if scan_date %}
       Showing <strong>{{ scan_date }}</strong>
       {% if status %}<span class="status-pill {{ status_css }}">{{ status }}</span>{% endif %}
-      {% if run and run.result_count is not none %}· {{ run.result_count }} result(s){% endif %}
+      {% if row_count is defined and row_count > 0 %}
+        · <strong>{{ row_count }}</strong> row{{ 's' if row_count != 1 else '' }}
+      {% elif run and run.result_count is not none %}
+        · {{ run.result_count }} symbol{{ 's' if run.result_count != 1 else '' }}
+      {% endif %}
     {% else %}
       No scan history available for this scanner.
     {% endif %}
@@ -19,7 +23,7 @@
 <nav class="date-bar" aria-label="Recent scan dates">
   {% for day in dates %}
     <a class="date-chip {% if day == scan_date %}is-active{% endif %}"
-       href="{{ url_for('scanners.scanner_day', scanner_id=scanner_id, scan_date=day) }}">{{ day }}</a>
+       href="{{ url_for('scanners.scanner_day', scanner_id=scanner_id, scan_date=day) }}{% if stock_filter %}?stock={{ stock_filter }}{% endif %}">{{ day }}</a>
   {% endfor %}
 </nav>
 {% endif %}
@@ -29,35 +33,136 @@
 {% endif %}
 
 {% if table_rows %}
-  <div class="table-shell">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Change</th>
-          {% for column in columns %}
-            <th>{{ column }}</th>
+<div class="filter-bar">
+  <label class="filter-label" for="stock-filter-input">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg>
+    Filter stocks
+  </label>
+  <div class="filter-input-wrap">
+    <input id="stock-filter-input"
+           type="search"
+           placeholder="Type a ticker…"
+           value="{{ stock_filter }}"
+           autocomplete="off"
+           aria-label="Filter table by stock symbol">
+    {% if stock_filter %}
+      <a class="filter-clear" href="{{ url_for('scanners.scanner_day', scanner_id=scanner_id, scan_date=scan_date) }}" aria-label="Clear filter">×</a>
+    {% endif %}
+  </div>
+  <span id="filter-count" class="filter-count muted" aria-live="polite"></span>
+</div>
+
+{% if has_validation %}
+<p class="legend muted">
+  <span class="legend-swatch validation-passed">Normal</span> = passed Validation Pass ·
+  <span class="legend-swatch validation-failed">Faded</span> = failed Validation Pass
+</p>
+{% endif %}
+
+<div class="table-shell">
+  <table class="data-table" id="scanner-table">
+    <thead>
+      <tr>
+        <th>Change</th>
+        {% for column in columns %}
+          <th>{{ column }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in table_rows %}
+        <tr
+          class="{% if is_downstream %}{% else %}{% if not row.picked %}is-dropped{% endif %}{% endif %} {% if row.validation_failed %}validation-failed{% elif row.validation_failed is sameas false %}validation-passed{% endif %}"
+          data-symbol="{{ row.symbol }}">
+          <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
+          {% for cell in row.cells %}
+            <td>
+              {% if loop.first and row.symbol %}
+                <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">{{ cell if cell is not none else row.symbol }}</a>
+              {% elif cell is sameas true %}
+                <span class="bool-true">✓ True</span>
+              {% elif cell is sameas false %}
+                <span class="bool-false">✗ False</span>
+              {% else %}
+                {{ cell if cell is not none else '—' }}
+              {% endif %}
+            </td>
           {% endfor %}
         </tr>
-      </thead>
-      <tbody>
-        {% for row in table_rows %}
-          <tr class="{% if not row.picked %}is-dropped{% endif %}">
-            <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
-            {% for cell in row.cells %}
-              <td>
-                {% if loop.first and row.symbol %}
-                  <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">{{ cell if cell is not none else row.symbol }}</a>
-                {% else %}
-                  {{ cell if cell is not none else '—' }}
-                {% endif %}
-              </td>
-            {% endfor %}
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p id="filter-no-match" class="empty filter-no-match" hidden>No rows match "<span id="filter-term"></span>". <button class="link-btn" id="filter-reset">Clear filter</button></p>
+</div>
 {% elif not empty_reason %}
   <p class="empty">No rows to display.</p>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var input  = document.getElementById('stock-filter-input');
+  var table  = document.getElementById('scanner-table');
+  var count  = document.getElementById('filter-count');
+  var nomatch = document.getElementById('filter-no-match');
+  var term   = document.getElementById('filter-term');
+  var reset  = document.getElementById('filter-reset');
+  if (!input || !table) return;
+
+  function applyFilter(value, updateUrl) {
+    var needle = value.trim().toUpperCase();
+    var rows = table.querySelectorAll('tbody tr');
+    var visible = 0;
+    rows.forEach(function (row) {
+      var sym = (row.dataset.symbol || '').toUpperCase();
+      var show = !needle || sym.indexOf(needle) !== -1;
+      row.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    if (count) {
+      count.textContent = needle ? visible + ' of ' + rows.length + ' row' + (rows.length !== 1 ? 's' : '') : '';
+    }
+    if (nomatch) {
+      nomatch.hidden = visible > 0 || !needle;
+      if (term) term.textContent = value.trim();
+    }
+    // Keep date-chip hrefs in sync so the filter is preserved across date navigation.
+    var chips = document.querySelectorAll('.date-chip');
+    chips.forEach(function (chip) {
+      var url = new URL(chip.href, location.href);
+      if (needle) {
+        url.searchParams.set('stock', needle);
+      } else {
+        url.searchParams.delete('stock');
+      }
+      chip.href = url.pathname + (url.search ? url.search : '');
+    });
+    // Also update the page URL so refresh restores the filter.
+    if (updateUrl && history.replaceState) {
+      var pageUrl = new URL(location.href);
+      if (needle) {
+        pageUrl.searchParams.set('stock', needle);
+      } else {
+        pageUrl.searchParams.delete('stock');
+      }
+      history.replaceState(null, '', pageUrl.pathname + (pageUrl.search ? pageUrl.search : ''));
+    }
+  }
+
+  // Apply initial value (from URL param pre-fill).
+  applyFilter(input.value, false);
+
+  input.addEventListener('input', function () { applyFilter(this.value, true); });
+  input.addEventListener('search', function () { applyFilter(this.value, true); }); // clear button
+
+  if (reset) {
+    reset.addEventListener('click', function () {
+      input.value = '';
+      applyFilter('');
+      input.focus();
+    });
+  }
+})();
+</script>
 {% endblock %}

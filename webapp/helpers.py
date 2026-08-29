@@ -41,6 +41,28 @@ def parse_metadata(raw: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def validation_failed(row: dict[str, Any]) -> bool | None:
+    """Return True/False when Validation Pass is present, else None.
+
+    Matches Combined Option Spread Analysis Excel highlighting: rows with
+    Validation Pass = False are shown with a light-red background.
+    """
+    meta = parse_metadata(row.get("metadata_json"))
+    if "Validation Pass" not in meta:
+        return None
+    value = meta.get("Validation Pass")
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value) == 0
+    text = str(value or "").strip().lower()
+    if text in {"false", "0", "no", "fail", "failed"}:
+        return True
+    if text in {"true", "1", "yes", "pass", "passed"}:
+        return False
+    return None
+
+
 def build_table_columns(scanner_id: str, rows: list[dict[str, Any]]) -> list[str]:
     preferred = preferred_columns(scanner_id)
     seen: set[str] = set()
@@ -144,4 +166,5 @@ __all__ = [
     "queries",
     "row_cells",
     "status_css",
+    "validation_failed",
 ]

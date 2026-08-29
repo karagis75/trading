@@ -107,7 +107,15 @@ SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
     },
     "combined-option-v8": {
         "title": "Combined Option Spread Analysis",
-        "columns": ["Symbol", "Strategy", "Expiry", "PCR", "Score", "R:R Ratio"],
+        "columns": [
+            "Symbol",
+            "Strategy",
+            "Expiry",
+            "PCR",
+            "Score",
+            "R:R Ratio",
+            "Validation Pass",
+        ],
     },
 }
 
