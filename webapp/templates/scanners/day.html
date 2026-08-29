@@ -29,6 +29,14 @@
 {% endif %}
 
 {% if table_rows %}
+  {% set has_validation = table_rows|selectattr('validation_failed', 'ne', none)|list %}
+  {% if has_validation %}
+    <p class="legend muted">
+      Rows highlighted in <span class="legend-swatch validation-failed">red</span> failed
+      <strong>Validation Pass</strong> (same as the Excel Combined Option workbook).
+      White rows passed validation.
+    </p>
+  {% endif %}
   <div class="table-shell">
     <table class="data-table">
       <thead>
@@ -41,12 +49,16 @@
       </thead>
       <tbody>
         {% for row in table_rows %}
-          <tr class="{% if not row.picked %}is-dropped{% endif %}">
+          <tr class="{% if not row.picked %}is-dropped{% endif %} {% if row.validation_failed %}validation-failed{% elif row.validation_failed is sameas false %}validation-passed{% endif %}">
             <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
             {% for cell in row.cells %}
               <td>
                 {% if loop.first and row.symbol %}
                   <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">{{ cell if cell is not none else row.symbol }}</a>
+                {% elif cell is sameas true %}
+                  True
+                {% elif cell is sameas false %}
+                  False
                 {% else %}
                   {{ cell if cell is not none else '—' }}
                 {% endif %}

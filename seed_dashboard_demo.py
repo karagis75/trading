@@ -188,6 +188,7 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             set(sequences["bullish-bias-nifty500"][index])
             | set(sequences["bearish-bias-nifty500"][index])
             | set(sequences["rangebound-stocks"][index])
+            | {"ATHERENERG", "APLAPOLLO"}
         )
         _write(folder / "Option_Scan_Candidates.csv", [{"Ticker": t} for t in merged])
         option_path = folder / "Combined_Option_Spread_Analysis.xlsx"
@@ -195,12 +196,40 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             # Leave one day skipped for combined-option to exercise the banner.
             pass
         else:
+            option_rows = [
+                {
+                    "Symbol": "ATHERENERG",
+                    "Strategy": "Bull Call Spread",
+                    "Expiry": "2026-09-25",
+                    "PCR": 0.7,
+                    "Score": 68 + index,
+                    "R:R Ratio": 1.1,
+                    "Validation Pass": False,
+                },
+                {
+                    "Symbol": "APLAPOLLO",
+                    "Strategy": "Bull Put Spread",
+                    "Expiry": "2026-09-25",
+                    "PCR": 1.1,
+                    "Score": 81 + index,
+                    "R:R Ratio": 1.6,
+                    "Validation Pass": True,
+                },
+            ]
+            for offset, ticker in enumerate(merged[:2]):
+                option_rows.append(
+                    {
+                        "Symbol": ticker,
+                        "Strategy": "Iron Condor",
+                        "Expiry": "2026-09-25",
+                        "PCR": 0.95,
+                        "Score": 70 + index + offset,
+                        "R:R Ratio": 1.3,
+                        "Validation Pass": bool(offset % 2 == 0),
+                    }
+                )
             with pd.ExcelWriter(option_path, engine="openpyxl") as writer:
-                pd.DataFrame(
-                    [{"Symbol": t, "Strategy": "Bull Call Spread", "Expiry": "2026-09-25",
-                      "PCR": 0.9, "Score": 72 + index, "R:R Ratio": 1.4}
-                     for t in merged[:3]]
-                ).to_excel(writer, sheet_name="All Opportunities", index=False)
+                pd.DataFrame(option_rows).to_excel(writer, sheet_name="All Opportunities", index=False)
 
         file_map = {
             "bullish-bias-nifty500": folder / "Bullish_Bias_Analysis.xlsx",

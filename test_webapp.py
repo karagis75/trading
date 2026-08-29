@@ -260,5 +260,121 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(payload["results"][0]["symbol"], "RELIANCE")
 
 
+class OptionValidationHighlightTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.universe = self.root / "universe.csv"
+        self.db_path = self.root / "history.sqlite3"
+        write_universe(self.universe, ["ATHERENERG", "APLAPOLLO", "RELIANCE"])
+        self.tracker = MembershipTracker.from_path(self.db_path, self.universe)
+        tracking = TrackingConfig(
+            enabled=True,
+            role="downstream",
+            format="xlsx",
+            sheet="All Opportunities",
+            symbol_column="Symbol",
+            classification_column="Strategy",
+            confidence_column="Score",
+        )
+        day = date(2026, 8, 28)
+        path = self.root / "Combined_Option_Spread_Analysis.xlsx"
+        frame = pd.DataFrame(
+            [
+                {
+                    "Symbol": "ATHERENERG",
+                    "Strategy": "Bull Call Spread",
+                    "Expiry": "2026-09-25",
+                    "PCR": 0.7,
+                    "Score": 68,
+                    "R:R Ratio": 1.1,
+                    "Validation Pass": False,
+                },
+                {
+                    "Symbol": "APLAPOLLO",
+                    "Strategy": "Bull Put Spread",
+                    "Expiry": "2026-09-25",
+                    "PCR": 1.1,
+                    "Score": 81,
+                    "R:R Ratio": 1.6,
+                    "Validation Pass": True,
+                },
+                {
+                    "Symbol": "ATHERENERG",
+                    "Strategy": "Iron Condor",
+                    "Expiry": "2026-09-25",
+                    "PCR": 0.8,
+                    "Score": 60,
+                    "R:R Ratio": 1.0,
+                    "Validation Pass": False,
+                },
+            ]
+        )
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            frame.to_excel(writer, sheet_name="All Opportunities", index=False)
+        self.tracker.ingest_output(
+            scanner_id="combined-option-v8",
+            tracking=tracking,
+            scan_date=day,
+            output_path=path,
+            job_ok=True,
+        )
+        jobs_path = self.root / "jobs.json"
+        jobs_path.write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "name": "combined-option-v8",
+                            "enabled": True,
+                            "script": "combinedoptionanalyzedv8.py",
+                            "tracking": {
+                                "enabled": True,
+                                "role": "downstream",
+                                "format": "xlsx",
+                                "sheet": "All Opportunities",
+                                "symbol_column": "Symbol",
+                            },
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.app = create_app(
+            AppConfig(
+                database_url=str(self.db_path),
+                jobs_path=jobs_path,
+                jobs=[JobMeta(name="combined-option-v8", enabled=True, role="downstream")],
+            )
+        )
+        self.client = self.app.test_client()
+        self.day = day.isoformat()
+
+    def tearDown(self) -> None:
+        self.tracker.close()
+        self.tmp.cleanup()
+
+    def test_validation_pass_colors_and_multi_rows(self) -> None:
+        from webapp.helpers import validation_failed
+
+        rows = scanner_day_rows(self.tracker.connection, "combined-option-v8", self.day)
+        self.assertEqual(len(rows), 3)
+        ather = [row for row in rows if row["symbol"] == "ATHERENERG"]
+        apollo = [row for row in rows if row["symbol"] == "APLAPOLLO"]
+        self.assertEqual(len(ather), 2)
+        self.assertEqual(len(apollo), 1)
+        self.assertTrue(validation_failed(ather[0]))
+        self.assertFalse(validation_failed(apollo[0]))
+
+        page = self.client.get(f"/scanners/combined-option-v8/{self.day}")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"ATHERENERG", page.data)
+        self.assertIn(b"APLAPOLLO", page.data)
+        self.assertIn(b"validation-failed", page.data)
+        self.assertIn(b"validation-passed", page.data)
+        self.assertIn(b"Validation Pass", page.data)
+
+
 if __name__ == "__main__":
     unittest.main()

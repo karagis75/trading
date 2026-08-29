@@ -263,7 +263,13 @@ def scanner_day_rows(
     scanner_id: str,
     scan_date: str | date,
 ) -> list[dict[str, Any]]:
-    """Picked/dropped detail rows for a scanner day, with metadata."""
+    """Picked/dropped detail rows for a scanner day, with metadata.
+
+    When a symbol has multiple opportunity rows in ``scanner_result_detail``
+    (e.g. Combined Option Spread Analysis), each detail record is returned so
+    the UI can mirror the Excel workbook row-for-row, including per-row
+    Validation Pass highlighting.
+    """
     day = scan_date.isoformat() if isinstance(scan_date, date) else str(scan_date)
     run = scanner_day_run(connection, scanner_id, day)
     if not run or not run.get("run_id"):
@@ -304,21 +310,27 @@ def scanner_day_rows(
 
     rows: list[dict[str, Any]] = []
     for daily_row in daily:
-        payload = dict(daily_row)
         matches = detail_by_symbol.get(daily_row["symbol"]) or []
-        primary = matches[0] if matches else None
-        if primary:
-            payload["signal_date"] = primary["signal_date"] or payload.get("signal_date")
-            payload["classification"] = primary["classification"] or payload.get("classification")
-            payload["confidence"] = primary["confidence"] if primary["confidence"] is not None else payload.get("confidence")
-            payload["score"] = primary["score"]
-            payload["metadata_json"] = primary["metadata_json"]
-            payload["record_count"] = len(matches)
-        else:
+        if not matches:
+            payload = dict(daily_row)
             payload["metadata_json"] = None
             payload["record_count"] = 0
             payload["score"] = None
-        rows.append(payload)
+            payload["record_number"] = None
+            rows.append(payload)
+            continue
+        for detail in matches:
+            payload = dict(daily_row)
+            payload["signal_date"] = detail["signal_date"] or payload.get("signal_date")
+            payload["classification"] = detail["classification"] or payload.get("classification")
+            payload["confidence"] = (
+                detail["confidence"] if detail["confidence"] is not None else payload.get("confidence")
+            )
+            payload["score"] = detail["score"]
+            payload["metadata_json"] = detail["metadata_json"]
+            payload["record_count"] = len(matches)
+            payload["record_number"] = detail["record_number"]
+            rows.append(payload)
     return rows
 
 

@@ -14,6 +14,7 @@ from ..helpers import (
     queries,
     row_cells,
     status_css,
+    validation_failed,
 )
 
 scanners_bp = Blueprint("scanners", __name__, url_prefix="/scanners")
@@ -79,12 +80,14 @@ def scanner_day(scanner_id: str, scan_date: str):
     table_rows = []
     for row in rows:
         badge = change_badge(row.get("change_type"), row.get("current_streak_scans"))
+        failed = validation_failed(row)
         table_rows.append(
             {
                 "symbol": row.get("symbol"),
                 "badge": badge,
                 "cells": row_cells(row, columns),
                 "picked": bool(row.get("picked")),
+                "validation_failed": failed,
             }
         )
 
