@@ -351,6 +351,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "nifty500_xy_intersect.py",
                 "rangeboundstocks.py",
                 "nimblr_minervini_cpr_scanner.py",
+                "nifty_pinball_yahoo.py",
+                "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",
                 "combinedoptionanalyzedv8.py",
             ],

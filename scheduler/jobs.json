@@ -58,6 +58,28 @@
       ]
     },
     {
+      "name": "nifty-fib-pinball-bullish",
+      "enabled": true,
+      "script": "nifty_pinball_yahoo.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "outputs/{date}/Bullish_Fib_Pinball.xlsx"
+      ]
+    },
+    {
+      "name": "nifty-fib-pinball-bearish",
+      "enabled": true,
+      "script": "bearish_fib_pinball.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "outputs/{date}/Bearish_Fib_Pinball.xlsx"
+      ]
+    },
+    {
       "name": "merge-option-candidates",
       "enabled": true,
       "script": "merge_ticker_candidates.py",
