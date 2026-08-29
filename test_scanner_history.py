@@ -34,11 +34,15 @@ def write_universe(path: Path, tickers: list[str]) -> None:
 
 
 class FakePostgresConnection:
-    def __init__(self) -> None:
+    def __init__(self, fail_sql: str | None = None) -> None:
         self.executed: list[tuple[str, tuple]] = []
+        self.rollback_calls = 0
+        self.fail_sql = fail_sql
 
     def execute(self, sql, params=()):
         self.executed.append((sql, params))
+        if self.fail_sql and sql.startswith(self.fail_sql):
+            raise RuntimeError(f"syntax error at or near \"{sql.split()[0]}\"")
         return self
 
     def executemany(self, sql, params):
@@ -47,6 +51,9 @@ class FakePostgresConnection:
 
     def commit(self):
         pass
+
+    def rollback(self):
+        self.rollback_calls += 1
 
     def close(self):
         pass
@@ -68,6 +75,21 @@ class DatabaseCompatibilityTests(unittest.TestCase):
             fake.executed[1][0],
             "INSERT INTO stocks(symbol, industry) VALUES (%s, %s)",
         )
+
+    def test_postgres_wrapper_rolls_back_and_reraises_on_failed_statement(self) -> None:
+        """Regression test: a bad statement (e.g. a SQLite-only PRAGMA sent to
+        PostgreSQL by mistake) must not silently leave the connection unusable
+        for later queries. The wrapper should roll back and re-raise."""
+        fake = FakePostgresConnection(fail_sql="PRAGMA")
+        connection = db.PostgresConnection(fake)
+
+        with self.assertRaises(RuntimeError):
+            connection.execute("PRAGMA cache_size = -8192")
+        self.assertEqual(fake.rollback_calls, 1)
+
+        # A later, valid query must still work on the same connection object.
+        connection.execute("SELECT 1")
+        self.assertEqual(fake.executed[-1][0], "SELECT 1")
 
 
 def write_hits(path: Path, tickers: list[str], sheet: str | None = None) -> None:

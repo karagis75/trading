@@ -119,10 +119,28 @@ class PostgresConnection:
         self._connection = connection
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()):
-        return self._connection.execute(sql.replace("?", "%s"), params)
+        try:
+            return self._connection.execute(sql.replace("?", "%s"), params)
+        except Exception:
+            self._rollback_quietly()
+            raise
 
     def executemany(self, sql: str, params):
-        return self._connection.executemany(sql.replace("?", "%s"), params)
+        try:
+            return self._connection.executemany(sql.replace("?", "%s"), params)
+        except Exception:
+            self._rollback_quietly()
+            raise
+
+    def _rollback_quietly(self) -> None:
+        """Best-effort rollback so a failed statement doesn't poison this
+        connection for whatever runs on it next. Safe to call even when
+        autocommit is enabled (nothing to roll back, and any error here is
+        swallowed rather than masking the original exception)."""
+        try:
+            self._connection.rollback()
+        except Exception:
+            pass
 
     def commit(self) -> None:
         self._connection.commit()
@@ -147,7 +165,7 @@ def _initialize_postgres(connection: PostgresConnection) -> None:
     connection.commit()
 
 
-def connect(path: str | Path):
+def connect(path: str | Path, *, autocommit: bool = False):
     """Connect to SQLite paths or PostgreSQL URLs.
 
     PostgreSQL URLs use the form
@@ -163,7 +181,13 @@ def connect(path: str | Path):
                 "PostgreSQL support requires psycopg. Install it with "
                 "'python -m pip install \"psycopg[binary]\"'."
             ) from exc
-        connection = PostgresConnection(psycopg.connect(value, row_factory=dict_row))
+        # The read-only dashboard opts into autocommit because it keeps a
+        # connection open per thread across requests. Scheduled ingestion keeps
+        # the default transactional behaviour so a scanner-day write remains
+        # atomic.
+        connection = PostgresConnection(
+            psycopg.connect(value, row_factory=dict_row, autocommit=autocommit)
+        )
         _initialize_postgres(connection)
         return connection
 
