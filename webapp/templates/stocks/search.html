@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Stock View · Trading Scans{% endblock %}
+{% block content %}
+<section class="page-head">
+  <p class="eyebrow">Stock View</p>
+  <h1>Search stocks</h1>
+  <p class="lede">
+    Search any ticker that has appeared in at least one scanner.
+    {% if latest_date %}Latest scan date: <strong>{{ latest_date }}</strong>.{% endif %}
+  </p>
+</section>
+
+<form class="search-form" action="{{ url_for('stocks.stock_search') }}" method="get" role="search">
+  <label class="sr-only" for="stock-q">Ticker or company</label>
+  <input id="stock-q" name="q" type="search" value="{{ query }}" placeholder="e.g. RELIANCE or Infosys" autocomplete="off" autofocus>
+  <button type="submit">Search</button>
+  <ul id="stock-suggestions" class="suggestions" hidden></ul>
+</form>
+
+{% if query %}
+  <section class="panel">
+    <div class="panel-head"><h2>Results for “{{ query }}”</h2></div>
+    {% if results %}
+      <ul class="result-list">
+        {% for row in results %}
+          <li>
+            <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">
+              <strong>{{ row.symbol }}</strong>
+              <span>{{ row.company_name or '' }}</span>
+              {% if row.industry %}<span class="muted">{{ row.industry }}</span>{% endif %}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="error-msg">{{ query|upper }} was not found in any scanner results.</p>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='search.js') }}"></script>
+{% endblock %}
