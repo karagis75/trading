@@ -47,7 +47,11 @@ def thread_db(database_url: str):
     conn = getattr(_local, key, None)
     if conn is None:
         from scanner_history import db as _db
-        conn = _db.connect(database_url)
+        is_postgres = database_url.startswith(("postgresql://", "postgres://"))
+        # Read-only PostgreSQL connections use autocommit so each query ends
+        # immediately and no idle transaction persists across web requests.
+        # SQLite ignores this option inside db.connect().
+        conn = _db.connect(database_url, autocommit=is_postgres)
         # SQLite-only tuning. PRAGMA statements are invalid SQL on PostgreSQL
         # and, sent over a non-autocommit connection, would abort the
         # transaction — poisoning this cached connection for every future

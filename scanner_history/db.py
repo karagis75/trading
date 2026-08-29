@@ -165,7 +165,7 @@ def _initialize_postgres(connection: PostgresConnection) -> None:
     connection.commit()
 
 
-def connect(path: str | Path):
+def connect(path: str | Path, *, autocommit: bool = False):
     """Connect to SQLite paths or PostgreSQL URLs.
 
     PostgreSQL URLs use the form
@@ -181,12 +181,13 @@ def connect(path: str | Path):
                 "PostgreSQL support requires psycopg. Install it with "
                 "'python -m pip install \"psycopg[binary]\"'."
             ) from exc
-        # autocommit=True: each statement completes independently, so a single
-        # failing query cannot leave the connection in an aborted-transaction
-        # state that blocks every later query. This matters because the
-        # dashboard keeps a connection open per thread across many requests
-        # (see webapp/perf.py) instead of opening a fresh one each time.
-        connection = PostgresConnection(psycopg.connect(value, row_factory=dict_row, autocommit=True))
+        # The read-only dashboard opts into autocommit because it keeps a
+        # connection open per thread across requests. Scheduled ingestion keeps
+        # the default transactional behaviour so a scanner-day write remains
+        # atomic.
+        connection = PostgresConnection(
+            psycopg.connect(value, row_factory=dict_row, autocommit=autocommit)
+        )
         _initialize_postgres(connection)
         return connection
 
