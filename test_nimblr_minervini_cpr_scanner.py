@@ -182,6 +182,41 @@ class SymbolHelperTests(unittest.TestCase):
         self.assertEqual(scanner.display_symbol("TCS"), "TCS")
 
 
+class TimezoneAndEmptyOutputTests(unittest.TestCase):
+    def test_normalize_ohlcv_strips_asia_kolkata_timezone(self) -> None:
+        index = pd.date_range("2026-08-25", periods=3, freq="D", tz="Asia/Kolkata")
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0, 101.0, 102.0],
+                "High": [101.0, 102.0, 103.0],
+                "Low": [99.0, 100.0, 101.0],
+                "Close": [100.5, 101.5, 102.5],
+                "Volume": [1_000.0, 1_100.0, 1_200.0],
+            },
+            index=index,
+        )
+        out = scanner.normalize_ohlcv(frame)
+        self.assertIsNone(out.index.tz)
+        self.assertEqual(out.index[0], pd.Timestamp("2026-08-25"))
+        self.assertEqual(out.index[-1], pd.Timestamp("2026-08-27"))
+
+    def test_backtest_does_not_fail_on_tz_aware_yahoo_index(self) -> None:
+        config = short_config()
+        frame = passing_ohlcv(config, extra_sessions=2)
+        frame.index = frame.index.tz_localize("Asia/Kolkata")
+        trades = scanner.backtest_symbol(frame, config)
+        self.assertGreaterEqual(len(trades), 1)
+        self.assertAlmostEqual(trades[-1]["Entry"], float(frame.iloc[-2]["Open"]))
+
+    def test_empty_scan_still_writes_header_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "empty.xlsx"
+            scanner.write_results(scanner.format_results([]), path)
+            loaded = pd.read_excel(path, engine="openpyxl")
+            self.assertEqual(list(loaded.columns)[:3], ["Ticker", "Date", "Close"])
+            self.assertEqual(len(loaded), 0)
+
+
 class IndicatorMathTests(unittest.TestCase):
     def test_ema_matches_pandas_ewm(self) -> None:
         close = pd.Series([10.0, 11.0, 12.0, 13.0, 14.0])

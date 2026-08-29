@@ -264,6 +264,13 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     frame = frame.dropna(subset=["Open", "High", "Low", "Close"])
     if not isinstance(frame.index, pd.DatetimeIndex):
         frame.index = pd.to_datetime(frame.index)
+    if frame.index.tz is not None:
+        try:
+            frame.index = frame.index.tz_convert("Asia/Kolkata")
+        except (TypeError, ValueError, AttributeError):
+            pass
+        frame.index = frame.index.tz_localize(None)
+    frame.index = frame.index.normalize()
     return frame.sort_index()
 
 
@@ -684,40 +691,42 @@ def _round_result(row: dict[str, Any]) -> dict[str, Any]:
     return rounded
 
 
+RESULT_COLUMNS = [
+    "Ticker",
+    "Date",
+    "Close",
+    "CCI",
+    "EMA10",
+    "EMA20",
+    "EMA50",
+    "EMA150",
+    "EMA200",
+    "ATR",
+    "ATR_Breakout",
+    "CPR_Top",
+    "CPR_Pivot",
+    "CPR_Bottom",
+    "Low_52W",
+    "High_52W",
+    "Volume",
+    "Volume_EMA20",
+    "Next_Open",
+    "Suggested_Stop",
+    "Risk_Per_Share",
+    "Nimblr",
+    "Minervini",
+    "CPR",
+    "Sections_Passed",
+    "Qualified",
+    "Failed_Conditions",
+]
+
+
 def format_results(results: list[dict[str, Any]]) -> pd.DataFrame:
     if not results:
-        return pd.DataFrame()
-    columns = [
-        "Ticker",
-        "Date",
-        "Close",
-        "CCI",
-        "EMA10",
-        "EMA20",
-        "EMA50",
-        "EMA150",
-        "EMA200",
-        "ATR",
-        "ATR_Breakout",
-        "CPR_Top",
-        "CPR_Pivot",
-        "CPR_Bottom",
-        "Low_52W",
-        "High_52W",
-        "Volume",
-        "Volume_EMA20",
-        "Next_Open",
-        "Suggested_Stop",
-        "Risk_Per_Share",
-        "Nimblr",
-        "Minervini",
-        "CPR",
-        "Sections_Passed",
-        "Qualified",
-        "Failed_Conditions",
-    ]
+        return pd.DataFrame(columns=RESULT_COLUMNS)
     frame = pd.DataFrame([_round_result(row) for row in results])
-    ordered = [column for column in columns if column in frame.columns]
+    ordered = [column for column in RESULT_COLUMNS if column in frame.columns]
     extra = [column for column in frame.columns if column not in ordered]
     return frame.loc[:, ordered + extra].sort_values(
         by=["Qualified", "Sections_Passed", "CCI"],
@@ -820,13 +829,10 @@ def run_scan(args: argparse.Namespace) -> int:
 
     results = scan_tickers(tickers, config, include_failures=args.include_failures)
     qualified = [row for row in results if row.get("Qualified")]
-    if not results:
-        print("No scan rows were produced. Check data availability.")
-        return 0
     output = format_results(results)
     write_results(output, args.output)
     print(
-        f"Scan complete. {len(qualified)} combined hit(s) out of {len(results)} evaluated row(s). "
+        f"Scan complete. {len(qualified)} combined hit(s) out of {len(tickers)} ticker(s). "
         f"Saved to '{args.output}'."
     )
     return 0
@@ -839,10 +845,11 @@ def run_backtest(tickers: list[str], config: CombinedScannerConfig, args: argpar
             history = fetch_history(ticker, config)
             if history.empty or len(history) < config.minimum_history:
                 continue
-            cutoff = history.index.max() - pd.Timedelta(days=args.backtest_days)
+            last_date = pd.Timestamp(history.index.max()).normalize()
+            cutoff = last_date - pd.Timedelta(days=args.backtest_days)
             symbol_trades = backtest_symbol(history, config)
             for trade in symbol_trades:
-                signal_ts = pd.Timestamp(trade["Signal_Date"])
+                signal_ts = pd.Timestamp(trade["Signal_Date"]).normalize()
                 if signal_ts < cutoff:
                     continue
                 trade["Ticker"] = display_symbol(ticker)
