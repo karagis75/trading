@@ -23,9 +23,12 @@ from scanner_history.queries import (
     stock_summary,
 )
 from scanner_history.tracker import MembershipTracker, TrackingConfig
+from unittest import mock
+
 from webapp import create_app
 from webapp.config import AppConfig, JobMeta
 from webapp.perf import invalidate as invalidate_cache
+from webapp.perf import reset_thread_db, thread_db
 
 
 def write_universe(path: Path, tickers: list[str]) -> None:
@@ -377,6 +380,113 @@ class OptionValidationHighlightTests(unittest.TestCase):
         self.assertIn(b"validation-failed", page.data)
         self.assertIn(b"validation-passed", page.data)
         self.assertIn(b"Validation Pass", page.data)
+
+
+class FakeNonSqliteConnection:
+    """Stands in for webapp.perf's PostgresConnection without a real DB.
+
+    Raises if any SQLite-only PRAGMA statement is sent to it, reproducing the
+    production bug where thread_db() applied SQLite tuning PRAGMAs to every
+    connection type regardless of backend.
+    """
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+        self.closed = False
+
+    def execute(self, sql, params=()):
+        self.queries.append(sql)
+        if sql.strip().upper().startswith("PRAGMA"):
+            raise RuntimeError('syntax error at or near "PRAGMA"')
+        return self
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class ThreadDbSafetyTests(unittest.TestCase):
+    """Regression tests for the connection-poisoning bug reported in production:
+    'psycopg.errors.InFailedSqlTransaction: current transaction is aborted'.
+    """
+
+    def setUp(self) -> None:
+        invalidate_cache()
+
+    def test_thread_db_does_not_send_pragma_to_non_sqlite_connections(self) -> None:
+        fake = FakeNonSqliteConnection()
+        with mock.patch("scanner_history.db.connect", return_value=fake):
+            conn = thread_db("postgresql://fake/db")
+        self.assertIs(conn, fake)
+        # No PRAGMA statement should have been attempted against a non-sqlite connection.
+        self.assertFalse(any(q.strip().upper().startswith("PRAGMA") for q in fake.queries))
+        # A normal query still works — the connection was never poisoned.
+        conn.execute("SELECT 1")
+        self.assertIn("SELECT 1", fake.queries)
+
+    def test_reset_thread_db_drops_and_closes_cached_connection(self) -> None:
+        fake = FakeNonSqliteConnection()
+        with mock.patch("scanner_history.db.connect", return_value=fake):
+            first = thread_db("postgresql://fake/db2")
+        self.assertIs(first, fake)
+
+        reset_thread_db("postgresql://fake/db2")
+        self.assertTrue(fake.closed)
+
+        other = FakeNonSqliteConnection()
+        with mock.patch("scanner_history.db.connect", return_value=other):
+            second = thread_db("postgresql://fake/db2")
+        self.assertIs(second, other)
+        self.assertIsNot(second, first)
+
+    def test_app_teardown_resets_connection_after_request_exception(self) -> None:
+        """End-to-end: a request that raises while using the DB must not
+        leave the whole app permanently broken for subsequent requests."""
+        tmp = tempfile.TemporaryDirectory()
+        try:
+            root = Path(tmp.name)
+            universe = root / "universe.csv"
+            write_universe(universe, ["TCS"])
+            db_path = root / "history.sqlite3"
+            tracker = MembershipTracker.from_path(db_path, universe)
+            tracker.close()
+
+            jobs_path = root / "jobs.json"
+            jobs_path.write_text(json.dumps({"jobs": []}), encoding="utf-8")
+            app = create_app(AppConfig(database_url=str(db_path), jobs_path=jobs_path, jobs=[]))
+            client = app.test_client()
+
+            # First request succeeds normally and caches a thread-local connection.
+            ok = client.get("/scanners/")
+            self.assertEqual(ok.status_code, 200)
+
+            # Simulate a query blowing up mid-request (e.g. an aborted
+            # PostgreSQL transaction) by swapping in a connection whose
+            # execute() always raises — sqlite3.Connection itself can't be
+            # monkeypatched (its attributes are read-only in CPython).
+            import webapp.perf as perf_module
+
+            key = perf_module._cache_key(str(db_path))
+            broken = FakeNonSqliteConnection()
+
+            def _boom(*_a, **_kw):
+                raise RuntimeError("simulated aborted transaction")
+
+            broken.execute = _boom  # type: ignore[method-assign]
+            setattr(perf_module._local, key, broken)
+            invalidate_cache()  # force the next request to actually hit the (broken) connection
+
+            app.testing = False  # let Flask's error handler run instead of re-raising
+            failed = client.get("/scanners/")
+            self.assertEqual(failed.status_code, 500)
+
+            # The broken connection must have been evicted...
+            self.assertFalse(hasattr(perf_module._local, key))
+
+            # ...so the very next request recovers on its own.
+            healed = client.get("/scanners/")
+            self.assertEqual(healed.status_code, 200)
+        finally:
+            tmp.cleanup()
 
 
 if __name__ == "__main__":

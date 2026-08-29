@@ -15,6 +15,7 @@ Goals
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import threading
 import time
 from typing import Any, Callable
@@ -30,21 +31,28 @@ HISTORICAL_TTL = 86400  # 24 h  — past day pages never change
 _local = threading.local()
 
 
+def _cache_key(database_url: str) -> str:
+    return f"_db_{hashlib.md5(database_url.encode()).hexdigest()}"
+
+
 def thread_db(database_url: str):
     """Return a cached per-thread connection, creating one if needed.
 
-    We keep one SQLite connection open per thread so we avoid the per-request
+    We keep one connection open per thread so we avoid the per-request
     open/close/schema-check cost (~1 ms per connection on a warm disk).
     The connection is stored on threading.local so it is safe under Flask's
     threaded WSGI server.
     """
-    key = f"_db_{hashlib.md5(database_url.encode()).hexdigest()}"
+    key = _cache_key(database_url)
     conn = getattr(_local, key, None)
     if conn is None:
         from scanner_history import db as _db
         conn = _db.connect(database_url)
-        # Larger page cache (8 MB) so frequently read pages stay in memory.
-        if hasattr(conn, "execute"):
+        # SQLite-only tuning. PRAGMA statements are invalid SQL on PostgreSQL
+        # and, sent over a non-autocommit connection, would abort the
+        # transaction — poisoning this cached connection for every future
+        # request on this thread. Only apply to real sqlite3 connections.
+        if isinstance(conn, sqlite3.Connection):
             try:
                 conn.execute("PRAGMA cache_size = -8192")   # 8 MB
                 conn.execute("PRAGMA temp_store = MEMORY")
@@ -52,6 +60,26 @@ def thread_db(database_url: str):
                 pass
         setattr(_local, key, conn)
     return conn
+
+
+def reset_thread_db(database_url: str) -> None:
+    """Drop this thread's cached connection so the next request opens a fresh one.
+
+    Call this after a request fails while using the DB — a persistent
+    connection can be left unusable (e.g. an aborted PostgreSQL transaction),
+    and without this the whole process would 500 forever until restarted.
+    """
+    key = _cache_key(database_url)
+    conn = getattr(_local, key, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            delattr(_local, key)
+        except AttributeError:
+            pass
 
 
 # ── Simple TTL cache ──────────────────────────────────────────────────────────

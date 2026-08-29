@@ -11,7 +11,7 @@ from scanner_history import queries
 from scanner_history.normalize import normalize_symbol
 
 from .config import AppConfig, display_name_for, preferred_columns
-from .perf import thread_db
+from .perf import reset_thread_db, thread_db
 
 
 def get_config() -> AppConfig:
@@ -25,9 +25,18 @@ def get_db():
     return g.db
 
 
-def close_db(_exc=None) -> None:
+def close_db(exc: BaseException | None = None) -> None:
     # Thread-local connections are kept open — just clear the request reference.
     g.pop("db", None)
+    if exc is not None:
+        # The request raised while the DB connection was in use. Drop the
+        # cached thread-local connection so the next request opens a fresh
+        # one instead of reusing one that may be left unusable (e.g. an
+        # aborted PostgreSQL transaction) — see webapp/perf.py.
+        try:
+            reset_thread_db(get_config().database_url)
+        except Exception:
+            pass
 
 
 def parse_metadata(raw: Any) -> dict[str, Any]:
