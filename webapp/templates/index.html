@@ -33,13 +33,13 @@
   </div>
   <div class="health-strip">
     {% for item in health %}
-      <div class="health-item" title="{{ item.title }}">
+      <a class="health-item" title="{{ item.title }}" href="{{ url_for('scanners.scanner_latest', scanner_id=item.scanner_id) }}">
         <span class="status-dot {{ item.status_css }}"></span>
         <span class="health-label">{{ item.title }}</span>
         <span class="health-meta">
           {% if item.status %}{{ item.status }}{% if item.result_count is not none %} · {{ item.result_count }}{% endif %}{% else %}no run{% endif %}
         </span>
-      </div>
+      </a>
     {% endfor %}
   </div>
 </section>

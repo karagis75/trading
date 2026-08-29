@@ -29,8 +29,12 @@
     <article class="scanner-row {% if not scanner.job_enabled %}is-disabled{% endif %} {% if not scanner.scan_date %}is-no-data{% endif %}">
       <div class="scanner-info">
         <h2>
-          {% if scanner.job_enabled and scanner.scan_date %}
-            <a href="{{ url_for('scanners.scanner_latest', scanner_id=scanner.scanner_id) }}">{{ scanner.title }}</a>
+          {% if scanner.job_enabled %}
+            {% if scanner.scan_date %}
+              <a href="{{ url_for('scanners.scanner_day', scanner_id=scanner.scanner_id, scan_date=scanner.scan_date) }}">{{ scanner.title }}</a>
+            {% else %}
+              <a href="{{ url_for('scanners.scanner_latest', scanner_id=scanner.scanner_id) }}">{{ scanner.title }}</a>
+            {% endif %}
           {% else %}
             {{ scanner.title }}
           {% endif %}

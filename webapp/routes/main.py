@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from flask import Blueprint, render_template
 
-from ..helpers import display_name_for, enrich_scanner_index, get_config, get_db, queries, status_css
-from ..perf import LIVE_TTL, SHORT_TTL, cached
+from ..helpers import display_name_for, get_config, get_db, queries, status_css
+from ..perf import SHORT_TTL, cached
 
 main_bp = Blueprint("main", __name__)
 
@@ -16,11 +16,6 @@ def index():
     cfg = get_config()
 
     latest = cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
-    scanners = cached(
-        "scanner_index",
-        LIVE_TTL,
-        lambda: enrich_scanner_index(queries.scanner_index(connection), [job.name for job in cfg.jobs]),
-    )
 
     health = []
     if latest:
@@ -50,6 +45,5 @@ def index():
         "index.html",
         latest_date=latest,
         health=health,
-        scanners=scanners,
         has_data=bool(latest),
     )
