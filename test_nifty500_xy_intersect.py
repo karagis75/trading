@@ -247,6 +247,14 @@ class Nifty500IntersectTests(unittest.TestCase):
         self.assertTrue(result.empty)
         self.assertEqual(download_mock.call_count, config.max_retries)
 
+    def test_config_rejects_invalid_retry_settings(self) -> None:
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(max_retries=0)
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(request_delay=-0.1)
+        with self.assertRaises(ValueError):
+            scanner.IntersectScannerConfig(retry_delay=-0.1)
+
     def test_screen_respects_request_delay_between_tickers(self) -> None:
         history = make_history()
 

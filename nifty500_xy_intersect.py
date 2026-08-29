@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,6 +62,14 @@ class IntersectScannerConfig:
     request_delay: float = 0.0
     max_retries: int = 3
     retry_delay: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.request_delay < 0 or not math.isfinite(self.request_delay):
+            raise ValueError("request_delay must be a finite non-negative number")
+        if self.max_retries < 1:
+            raise ValueError("max_retries must be at least 1")
+        if self.retry_delay < 0 or not math.isfinite(self.retry_delay):
+            raise ValueError("retry_delay must be a finite non-negative number")
 
     @property
     def minimum_history(self) -> int:

@@ -46,7 +46,9 @@
         "--input",
         "ind_nifty500list.csv",
         "--output",
-        "outputs/{date}/nifty500_xy_matrix_signals.csv"
+        "outputs/{date}/nifty500_xy_matrix_signals.csv",
+        "--request-delay",
+        "0.1"
       ],
       "tracking": {
         "enabled": true,
