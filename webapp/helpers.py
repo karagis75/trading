@@ -11,7 +11,7 @@ from scanner_history import queries
 from scanner_history.normalize import normalize_symbol
 
 from .config import AppConfig, display_name_for, preferred_columns
-from .perf import reset_thread_db, thread_db
+from .perf import LazyConnection, reset_thread_db
 
 
 def get_config() -> AppConfig:
@@ -19,9 +19,14 @@ def get_config() -> AppConfig:
 
 
 def get_db():
-    """Return a thread-local DB connection (no per-request open/close overhead)."""
+    """Return a lazy DB handle; the real connection opens on first query.
+
+    Cache hits in webapp/perf.cached() never call this handle's methods, so a
+    request fully served from cache never opens a database connection at all
+    — important now that the dev server runs threaded (see webapp/__init__.py).
+    """
     if "db" not in g:
-        g.db = thread_db(get_config().database_url)
+        g.db = LazyConnection(get_config().database_url)
     return g.db
 
 

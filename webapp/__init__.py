@@ -49,7 +49,12 @@ def create_app(config: AppConfig | None = None) -> Flask:
 def main() -> None:
     app = create_app()
     cfg = app.config["TRADING_CONFIG"]
-    app.run(host=cfg.host, port=cfg.port, debug=cfg.debug)
+    # threaded=True: the dev server is single-threaded by default, so a page's
+    # HTML, CSS, JS, and the browser's automatic favicon probe get handled one
+    # at a time instead of concurrently — the exact cause of a per-page "hitch"
+    # on load. Safe here because every DB connection is thread-local (see
+    # webapp/perf.py), so concurrent requests never share one connection.
+    app.run(host=cfg.host, port=cfg.port, debug=cfg.debug, threaded=True)
 
 
 if __name__ == "__main__":

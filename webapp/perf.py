@@ -66,6 +66,49 @@ def thread_db(database_url: str):
     return conn
 
 
+class LazyConnection:
+    """Defers acquiring the thread-local DB connection until first use.
+
+    Why this matters: the dev server runs with ``threaded=True`` so a page's
+    HTML/CSS/JS/favicon requests are handled concurrently instead of queueing
+    behind each other. Werkzeug's threaded mode (``socketserver.ThreadingMixIn``)
+    spawns a **new OS thread per connection** rather than reusing a pool, so if
+    a connection were opened eagerly on every request, most requests would pay
+    for a fresh connection (a real cost for PostgreSQL: a new TCP handshake and
+    backend process per request) even when the page is fully served from the
+    in-process cache in ``cached()`` below and never actually queries the DB.
+
+    With this wrapper, `get_db()` is free to call any time — the real
+    connection is only opened the first time a query actually executes, so a
+    request served entirely from cache opens zero DB connections.
+    """
+
+    __slots__ = ("_database_url", "_conn")
+
+    def __init__(self, database_url: str) -> None:
+        self._database_url = database_url
+        self._conn = None
+
+    def _resolve(self):
+        if self._conn is None:
+            self._conn = thread_db(self._database_url)
+        return self._conn
+
+    def execute(self, *args, **kwargs):
+        return self._resolve().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        return self._resolve().executemany(*args, **kwargs)
+
+    def commit(self):
+        return self._resolve().commit()
+
+    def close(self) -> None:
+        # Thread-local connections are reset via reset_thread_db(), not
+        # closed per-request; nothing to do if this wrapper never resolved.
+        pass
+
+
 def reset_thread_db(database_url: str) -> None:
     """Drop this thread's cached connection so the next request opens a fresh one.
 
