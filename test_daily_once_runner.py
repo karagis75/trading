@@ -448,6 +448,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "rangeboundstocks.py",
                 "minervini_vcp_scanner.py",
                 "nimblr_minervini_cpr_scanner.py",
+                "minervini_volume_cpr_scanner.py",
                 "nifty_pinball_yahoo.py",
                 "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",

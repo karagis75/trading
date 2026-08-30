@@ -172,7 +172,12 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "tickers.csv"
             out = Path(tmp) / "Minervini_VCP_Scan.xlsx"
-            pd.DataFrame({"Ticker": ["TCS", "INFY"]}).to_csv(src, index=False)
+            pd.DataFrame(
+                {
+                    "Ticker": ["TCS", "INFY"],
+                    "Company Name": ["Tata Consultancy Services Ltd.", "Infosys Ltd."],
+                }
+            ).to_csv(src, index=False)
 
             def fake_analyze(symbol: str, config: scanner.VCPScannerConfig, history=None):
                 return {
@@ -206,6 +211,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(out.exists())
             saved = pd.read_excel(out, engine="openpyxl")
             self.assertEqual(list(saved["Ticker"]), ["TCS", "INFY"])
+            self.assertEqual(list(saved["Company Name"]), ["Tata Consultancy Services Ltd.", "Infosys Ltd."])
             self.assertIn("qualified setup", captured.getvalue().lower())
 
     def test_repo_nifty_csv_is_readable(self) -> None:
