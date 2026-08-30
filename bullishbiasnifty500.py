@@ -140,8 +140,13 @@ def analyze_symbol(symbol: str, config: BullishScannerConfig) -> dict[str, Any] 
     # Ensure ticker has appropriate extension for NSE if not provided
     formatted_ticker = symbol if ("." in symbol or symbol.startswith("^")) else f"{symbol}.NS"
     try:
-        ticker = yf.Ticker(formatted_ticker)
-        df = ticker.history(period=config.lookback_period, interval="1d")
+        from yahoo_bar_store import get_daily_history
+
+        def live(_symbol: str, period: str) -> pd.DataFrame:
+            ticker = yf.Ticker(formatted_ticker)
+            return ticker.history(period=period, interval="1d")
+
+        df = get_daily_history(symbol, period=config.lookback_period, live_loader=live)
 
         if df.empty or len(df) < config.ema_macro:
             logging.warning(f"Insufficient historical data for {symbol}")

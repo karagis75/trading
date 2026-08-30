@@ -3,6 +3,24 @@
   "description": "Jobs started by the 8 AM / first-logon Windows task. Disable any scanner you do not want in the daily pass.",
   "jobs": [
     {
+      "name": "prefetch-yahoo-ohlcv",
+      "note": "Downloads 2y of Nifty 500 Yahoo daily bars once. Later jobs read yahoo_ohlcv_daily from TRADING_DATABASE_URL (PostgreSQL) or the local SQLite history file.",
+      "enabled": true,
+      "script": "prefetch_yahoo_ohlcv.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--lookback",
+        "2y",
+        "--request-delay",
+        "0.1"
+      ],
+      "tracking": {
+        "enabled": false,
+        "role": "infrastructure"
+      }
+    },
+    {
       "name": "bullish-bias-nifty500",
       "enabled": true,
       "script": "bullishbiasnifty500.py",

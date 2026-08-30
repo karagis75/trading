@@ -85,6 +85,23 @@ python -c "from scanner_history import db; c=db.connect(__import__('os').environ
 The scheduled jobs still write their normal files under `outputs\YYYY-MM-DD`.
 The runner reads those files and stores membership history in PostgreSQL.
 
+## Shared Yahoo daily-bar cache
+
+The first scheduled job, `prefetch-yahoo-ohlcv`, downloads two years of daily
+OHLCV for the Nifty 500 universe **once** and writes it to:
+
+- `yahoo_ohlcv_daily` (one row per symbol per session)
+- `yahoo_ohlcv_prefetch` (per-symbol status for that calendar day)
+
+These tables live in the same database as membership history
+(`TRADING_DATABASE_URL`, or `scanner_history\scanner_history.sqlite3` when
+that variable is unset). Every later Yahoo scanner
+(`bullish-bias-nifty500`, `minervini-volume-cpr`, fib pinball, and the rest)
+reads those bars instead of calling Yahoo again.
+
+If a ticker is missing from the cache, that scanner falls back to a live
+Yahoo chart request and stores the result for the remainder of the day.
+
 ## Confirm the scheduled run is actually using PostgreSQL
 
 `daily_once_runner.py` logs its resolved database target at the start of every

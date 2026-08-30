@@ -252,45 +252,53 @@ def evaluate_scan(
 
 
 def fetch_volume_cpr_history(symbol: str, config: VolumeCPRScannerConfig) -> pd.DataFrame:
-    """Load daily bars for this scanner without yfinance's crumb cookie.
+    """Load daily bars from today's shared Yahoo cache, else the chart API.
 
-    ``minervini-volume-cpr`` runs after ``minervini-vcp`` in the daily pass.
-    At that point ``yf.Ticker().history()`` often fails ``fc.yahoo.com`` DNS
-    and logs every listed Nifty name as "possibly delisted". This job uses
-    Yahoo's public chart API first (same path as the Node scanners) so those
-    yfinance ERROR lines are not printed.
+    ``minervini-volume-cpr`` runs after the prefetch job and ``minervini-vcp``.
+    Hitting ``yf.Ticker().history()`` at that point often fails crumb DNS and
+    logs listed Nifty names as delisted. Prefer cached bars; on a miss use
+    Yahoo's public chart API instead of yfinance.
     """
-    last_error: Exception | None = None
-    for attempt in range(config.max_retries):
-        try:
-            frame = history_from_chart(symbol, config.lookback_period)
-            if frame is not None and not frame.empty:
-                if config.request_delay:
-                    time.sleep(config.request_delay)
-                return frame
-            last_error = ValueError(f"empty Yahoo chart data for {symbol}")
-        except Exception as exc:
-            last_error = exc
+    from yahoo_bar_store import get_daily_history
+
+    def live(_symbol: str, _period: str) -> pd.DataFrame:
+        last_error: Exception | None = None
+        for attempt in range(config.max_retries):
+            try:
+                frame = history_from_chart(symbol, config.lookback_period)
+                if frame is not None and not frame.empty:
+                    if config.request_delay:
+                        time.sleep(config.request_delay)
+                    return frame
+                last_error = ValueError(f"empty Yahoo chart data for {symbol}")
+            except Exception as exc:
+                last_error = exc
+                logging.warning(
+                    "minervini-volume-cpr Yahoo chart attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    config.max_retries,
+                    symbol,
+                    exc,
+                )
+                reset_yahoo_http_session()
+            if attempt < config.max_retries - 1:
+                time.sleep(config.retry_delay * (2 ** attempt))
+        if last_error is not None:
             logging.warning(
-                "minervini-volume-cpr Yahoo chart attempt %d/%d failed for %s: %s",
-                attempt + 1,
-                config.max_retries,
+                "minervini-volume-cpr could not fetch %s after %d attempt(s): %s",
                 symbol,
-                exc,
+                config.max_retries,
+                last_error,
             )
-            reset_yahoo_http_session()
-        if attempt < config.max_retries - 1:
-            time.sleep(config.retry_delay * (2 ** attempt))
-    if last_error is not None:
-        logging.warning(
-            "minervini-volume-cpr could not fetch %s after %d attempt(s): %s",
-            symbol,
-            config.max_retries,
-            last_error,
-        )
-    if config.request_delay:
-        time.sleep(config.request_delay)
-    return pd.DataFrame()
+        if config.request_delay:
+            time.sleep(config.request_delay)
+        return pd.DataFrame()
+
+    return get_daily_history(
+        symbol,
+        period=config.lookback_period,
+        live_loader=live,
+    )
 
 
 def analyze_symbol(

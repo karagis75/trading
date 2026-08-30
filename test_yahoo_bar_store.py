@@ -1,0 +1,176 @@
+import os
+import tempfile
+import unittest
+from datetime import date
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pandas as pd
+
+import prefetch_yahoo_ohlcv as prefetch
+import yahoo_bar_store as store
+from scanner_history.db import connect
+
+
+def sample_bars(periods: int = 30, end: str = "2026-08-28") -> pd.DataFrame:
+    index = pd.bdate_range(end=end, periods=periods)
+    close = 100.0 + pd.Series(range(periods), index=index)
+    return pd.DataFrame(
+        {
+            "Open": close - 0.5,
+            "High": close + 1.0,
+            "Low": close - 1.0,
+            "Close": close,
+            "Volume": 1_000.0,
+        },
+        index=index,
+    )
+
+
+class YahooBarStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self.tmp.name) / "cache.sqlite3"
+        self.conn = connect(self.db)
+        self.now_patch = patch.object(store, "_now_ist", return_value=pd.Timestamp("2026-08-30"))
+        self.now_patch.start()
+
+    def tearDown(self) -> None:
+        self.now_patch.stop()
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_second_reader_does_not_call_live_loader(self) -> None:
+        history = sample_bars(40)
+        live = Mock(return_value=history)
+        first = store.get_daily_history(
+            "TCS",
+            period="2mo",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+        )
+        second = store.get_daily_history(
+            "TCS",
+            period="1mo",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+        )
+        self.assertEqual(len(first), 40)
+        self.assertGreater(len(second), 0)
+        self.assertEqual(live.call_count, 1)
+
+    def test_prefetch_then_scanner_reads_same_rows(self) -> None:
+        history = sample_bars(20)
+        stats = store.prefetch_symbols(
+            ["360ONE", "ABB"],
+            period="1mo",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda symbol, _period: history,
+        )
+        self.assertEqual(stats["success"], 2)
+        self.assertEqual(stats["bars"], 40)
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        loaded = store.get_daily_history(
+            "360ONE",
+            period="1mo",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+        )
+        self.assertEqual(len(loaded), 20)
+        self.assertAlmostEqual(float(loaded["Close"].iloc[-1]), float(history["Close"].iloc[-1]))
+        live.assert_not_called()
+
+    def test_short_cached_window_does_not_satisfy_longer_lookback(self) -> None:
+        short = sample_bars(8, end="2026-08-28")
+        store.upsert_bars(self.conn, "INFY", short)
+        live_history = sample_bars(60, end="2026-08-28")
+        live = Mock(return_value=live_history)
+        result = store.get_daily_history(
+            "INFY",
+            period="3mo",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+            persist=False,
+        )
+        live.assert_called_once()
+        self.assertEqual(len(result), 60)
+
+    def test_scheduled_minervini_jobs_reuse_prefetched_bars(self) -> None:
+        import minervini_volume_cpr_scanner as volume
+        import nimblr_minervini_cpr_scanner as nimblr
+
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            ["ABB"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        with patch.dict(os.environ, {"TRADING_YAHOO_CACHE_DB": str(self.db)}):
+            with patch.object(nimblr, "_download_yahoo_history") as yf_live:
+                with patch.object(volume, "history_from_chart") as chart_live:
+                    vcp = nimblr.fetch_history("ABB", nimblr.CombinedScannerConfig(lookback_period="2y"))
+                    cpr = volume.fetch_volume_cpr_history(
+                        "ABB",
+                        volume.VolumeCPRScannerConfig(lookback_period="2y", max_retries=1, retry_delay=0.0),
+                    )
+        self.assertEqual(len(vcp), 40)
+        self.assertEqual(len(cpr), 40)
+        yf_live.assert_not_called()
+        chart_live.assert_not_called()
+
+    def test_display_symbol_normalizes_ns_suffix(self) -> None:
+        self.assertEqual(store.display_symbol("TCS.NS"), "TCS")
+        self.assertEqual(store.yahoo_symbol("TCS"), "TCS.NS")
+
+    def test_prefetch_cli_writes_and_exits_zero(self) -> None:
+        history = sample_bars(8)
+        universe = Path(self.tmp.name) / "tickers.csv"
+        pd.DataFrame({"Ticker": ["TCS"]}).to_csv(universe, index=False)
+        with patch.object(store, "default_live_loader", return_value=history):
+            code = prefetch.main(
+                [
+                    "--input",
+                    str(universe),
+                    "--engine",
+                    "csv",
+                    "--database",
+                    str(self.db),
+                    "--lookback",
+                    "1mo",
+                    "--request-delay",
+                    "0",
+                    "--fetch-date",
+                    "2026-08-30",
+                ]
+            )
+        self.assertEqual(code, 0)
+        verify = connect(self.db)
+        try:
+            loaded = store.load_cached_history(verify, "TCS", period="1mo")
+            self.assertEqual(len(loaded), 8)
+            self.assertTrue(store.prefetch_succeeded(verify, "TCS", date(2026, 8, 30)))
+        finally:
+            verify.close()
+
+
+class YahooBarStoreEnvTests(unittest.TestCase):
+    def test_writes_disabled_without_database_env(self) -> None:
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"TRADING_DATABASE_URL", "TRADING_YAHOO_CACHE_DB", "TRADING_YAHOO_CACHE"}
+        }
+        with patch.dict(os.environ, env, clear=True):
+            self.assertFalse(store.cache_writes_enabled())
+            self.assertTrue(store.cache_database_url().endswith("scanner_history.sqlite3"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -101,6 +101,38 @@ CREATE INDEX IF NOT EXISTS idx_daily_change
     ON stock_scanner_daily(scan_date, change_type);
 CREATE INDEX IF NOT EXISTS idx_detail_symbol
     ON scanner_result_detail(symbol, run_id);
+
+CREATE TABLE IF NOT EXISTS yahoo_ohlcv_daily (
+    symbol TEXT NOT NULL,
+    yahoo_symbol TEXT NOT NULL,
+    bar_date TEXT NOT NULL,
+    open REAL NOT NULL,
+    high REAL NOT NULL,
+    low REAL NOT NULL,
+    close REAL NOT NULL,
+    volume REAL,
+    source TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (symbol, bar_date)
+);
+
+CREATE TABLE IF NOT EXISTS yahoo_ohlcv_prefetch (
+    fetch_date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    yahoo_symbol TEXT NOT NULL,
+    bar_count INTEGER NOT NULL DEFAULT 0,
+    first_bar TEXT,
+    last_bar TEXT,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (fetch_date, symbol)
+);
+
+CREATE INDEX IF NOT EXISTS idx_yahoo_ohlcv_symbol_date
+    ON yahoo_ohlcv_daily(symbol, bar_date);
+CREATE INDEX IF NOT EXISTS idx_yahoo_prefetch_date
+    ON yahoo_ohlcv_prefetch(fetch_date, status);
 """
 
 POSTGRES_SCHEMA = SCHEMA.replace(

@@ -804,13 +804,8 @@ def _download_yahoo_history(symbol: str, config: CombinedScannerConfig) -> pd.Da
     return history_from_chart(symbol, config.lookback_period, session)
 
 
-def fetch_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
-    """Download daily OHLCV, retrying after Yahoo crumb/DNS empty responses.
-
-    The "possibly delisted" yfinance message is often a cookie/crumb failure,
-    not a real NSE delisting. Retry with backoff and fall back to the public
-    chart API used by the Node scanners.
-    """
+def _live_yahoo_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
+    """Live Yahoo download with retries. Used only on a daily-bar cache miss."""
     last_error: Exception | None = None
     for attempt in range(config.max_retries):
         try:
@@ -842,6 +837,21 @@ def fetch_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
     if config.request_delay:
         time.sleep(config.request_delay)
     return pd.DataFrame()
+
+
+def fetch_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
+    """Return daily OHLCV from today's shared cache, else live Yahoo.
+
+    After ``prefetch-yahoo-ohlcv`` stores the Nifty 500 universe, later
+    Minervini jobs reuse those bars instead of calling Yahoo again.
+    """
+    from yahoo_bar_store import get_daily_history
+
+    return get_daily_history(
+        symbol,
+        period=config.lookback_period,
+        live_loader=lambda _symbol, _period: _live_yahoo_history(symbol, config),
+    )
 
 
 def analyze_symbol(

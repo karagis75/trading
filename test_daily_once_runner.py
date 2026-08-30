@@ -444,6 +444,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
         self.assertEqual(
             [job.script for job in enabled],
             [
+                "prefetch_yahoo_ohlcv.py",
                 "bullishbiasnifty500.py",
                 "bearisbiasnifty500.py",
                 "nifty500_xy_intersect.py",
