@@ -1,8 +1,10 @@
 """Run configured trading jobs at most once per successful calendar day.
 
 Windows Task Scheduler can fire both the 8 AM trigger and a logon trigger.
-This runner is the gate: after a successful run it writes a marker and later
-triggers exit immediately instead of repeating the work.
+This runner is the gate: after every job succeeds it writes a marker and later
+triggers exit immediately instead of repeating the work. If some jobs fail,
+later triggers retry only the failed or not-yet-run jobs; jobs that already
+succeeded earlier the same day are left alone.
 """
 
 from __future__ import annotations
@@ -256,6 +258,39 @@ def already_succeeded_today(state: dict[str, Any], today: date) -> bool:
     return state.get("date") == today.isoformat() and state.get("status") == STATUS_SUCCESS
 
 
+def job_results_for_today(state: dict[str, Any], today: date) -> dict[str, dict[str, Any]]:
+    """Return per-job results recorded earlier today, keyed by job name."""
+
+    if state.get("date") != today.isoformat():
+        return {}
+    raw_jobs = state.get("jobs")
+    if not isinstance(raw_jobs, list):
+        return {}
+    results: dict[str, dict[str, Any]] = {}
+    for item in raw_jobs:
+        if isinstance(item, dict) and item.get("name"):
+            results[str(item["name"])] = item
+    return results
+
+
+def job_result_from_state(raw: dict[str, Any]) -> JobResult:
+    """Rebuild a JobResult from a persisted state entry."""
+
+    return JobResult(
+        name=str(raw["name"]),
+        returncode=int(raw.get("returncode") or 0),
+        duration_seconds=float(raw.get("duration_seconds") or 0.0),
+        skipped=bool(raw.get("skipped", False)),
+        message=str(raw.get("message") or "already succeeded today"),
+    )
+
+
+def job_already_succeeded_today(raw: dict[str, Any]) -> bool:
+    """True when a job already finished successfully earlier today."""
+
+    return bool(raw.get("ok"))
+
+
 def configure_logging(log_dir: Path, today: date, stream: TextIO | None = None) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [
@@ -334,12 +369,21 @@ class DailyOnceRunner:
             )
 
         try:
+            previous_job_results = {} if force else job_results_for_today(state, today)
             results: list[JobResult] = []
             for job in self.jobs:
                 if not job.enabled:
                     continue
-                result = self.job_executor(job)
-                self._ingest_history(job, result, today)
+                previous = previous_job_results.get(job.name)
+                if previous and job_already_succeeded_today(previous):
+                    result = job_result_from_state(previous)
+                    LOGGER.info(
+                        "Skipping job %s; already succeeded earlier today.",
+                        job.name,
+                    )
+                else:
+                    result = self.job_executor(job)
+                    self._ingest_history(job, result, today)
                 results.append(result)
             self._write_membership_report(today)
             failed = [job for job in results if not job.ok]
