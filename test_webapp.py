@@ -499,5 +499,131 @@ class ThreadDbSafetyTests(unittest.TestCase):
             tmp.cleanup()
 
 
+class MinerviniVCPScannerViewTests(unittest.TestCase):
+    def setUp(self) -> None:
+        invalidate_cache()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.universe = self.root / "universe.csv"
+        self.db_path = self.root / "history.sqlite3"
+        write_universe(self.universe, ["EICHERMOT", "TITAN", "BOSCHLTD", "HOMEFIRST"])
+        self.tracker = MembershipTracker.from_path(self.db_path, self.universe)
+        self.tracking = TrackingConfig(
+            enabled=True,
+            role="primary_scanner",
+            format="xlsx",
+            symbol_column="Ticker",
+            membership_filter="Qualified=True",
+            signal_date_column="Date",
+        )
+        self.day = date(2026, 8, 30)
+        output = self.root / "Minervini_VCP_Scan.xlsx"
+        write_hits(
+            output,
+            [
+                {
+                    "Ticker": "EICHERMOT",
+                    "Date": self.day.isoformat(),
+                    "Close": 8059.0,
+                    "EMA50": 7900.0,
+                    "EMA150": 7600.0,
+                    "EMA200": 7200.0,
+                    "ATR": 85.0,
+                    "Contractions": 3,
+                    "Latest_Pullback_%": 2.66,
+                    "Base_Position": 0.92,
+                    "Stage2_Trend": True,
+                    "VCP": True,
+                    "Sections_Passed": 2,
+                    "Qualified": True,
+                },
+                {
+                    "Ticker": "TITAN",
+                    "Date": self.day.isoformat(),
+                    "Close": 5169.2,
+                    "EMA50": 5000.0,
+                    "EMA150": 4800.0,
+                    "EMA200": 4500.0,
+                    "ATR": 55.0,
+                    "Contractions": 3,
+                    "Latest_Pullback_%": 3.04,
+                    "Base_Position": 0.99,
+                    "Stage2_Trend": True,
+                    "VCP": True,
+                    "Sections_Passed": 2,
+                    "Qualified": False,
+                },
+            ],
+        )
+        self.tracker.ingest_output(
+            scanner_id="minervini-vcp",
+            tracking=self.tracking,
+            scan_date=self.day,
+            output_path=output,
+            job_ok=True,
+        )
+
+        jobs_path = self.root / "jobs.json"
+        jobs_path.write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "name": "bullish-bias-nifty500",
+                            "enabled": True,
+                            "script": "bullishbiasnifty500.py",
+                            "tracking": {"enabled": True, "role": "primary_scanner"},
+                        },
+                        {
+                            "name": "minervini-vcp",
+                            "enabled": True,
+                            "script": "minervini_vcp_scanner.py",
+                            "tracking": {
+                                "enabled": True,
+                                "role": "primary_scanner",
+                                "membership_filter": "Qualified=True",
+                            },
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config = AppConfig(
+            database_url=str(self.db_path),
+            jobs_path=jobs_path,
+            jobs=[
+                JobMeta(name="bullish-bias-nifty500", enabled=True, role="primary_scanner"),
+                JobMeta(name="minervini-vcp", enabled=True, role="primary_scanner"),
+            ],
+        )
+        self.client = create_app(self.config).test_client()
+
+    def tearDown(self) -> None:
+        self.tracker.close()
+        self.tmp.cleanup()
+
+    def test_minervini_vcp_appears_in_scanner_index_and_day_view(self) -> None:
+        index = self.client.get("/scanners/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn(b"Minervini VCP Scanner", index.data)
+        self.assertIn(b"minervini-vcp", index.data)
+        self.assertIn(
+            f"/scanners/minervini-vcp/{self.day.isoformat()}".encode(),
+            index.data,
+        )
+
+        day = self.client.get(f"/scanners/minervini-vcp/{self.day.isoformat()}")
+        self.assertEqual(day.status_code, 200)
+        self.assertIn(b"EICHERMOT", day.data)
+        self.assertIn(b"Latest_Pullback_%", day.data)
+        self.assertIn(b"Base_Position", day.data)
+        self.assertNotIn(b"TITAN", day.data)
+
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"Minervini VCP Scanner", home.data)
+
+
 if __name__ == "__main__":
     unittest.main()
