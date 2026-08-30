@@ -64,6 +64,11 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             symbol_column="Ticker", membership_filter="Qualified=True",
             signal_date_column="Date",
         ),
+        "minervini-volume-cpr": TrackingConfig(
+            enabled=True, role="primary_scanner", format="xlsx",
+            symbol_column="Ticker", membership_filter="Qualified=True",
+            signal_date_column="Date",
+        ),
         "nifty-fib-pinball-bullish": TrackingConfig(
             enabled=True, role="primary_scanner", format="xlsx", sheet="All",
             symbol_column="Ticker", signal_date_column="Last Date",
@@ -133,6 +138,14 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             ["AXISBANK"],
             ["AXISBANK", "INDUSINDBK"],
         ],
+        "minervini-volume-cpr": [
+            ["DIVISLAB"],
+            ["DIVISLAB", "SUNPHARMA"],
+            ["SUNPHARMA"],
+            ["SUNPHARMA", "CIPLA"],
+            ["CIPLA"],
+            ["CIPLA", "DRREDDY"],
+        ],
         "nifty-fib-pinball-bullish": [
             ["ADANIENT"],
             ["ADANIENT", "ADANIPORTS"],
@@ -191,6 +204,17 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
               "Sections_Passed": 3, "EMA10": 890, "EMA20": 880, "EMA50": 850, "EMA150": 800, "EMA200": 780,
               "ATR": 20, "Nimblr": True, "Minervini": True, "CPR": True}
              for t in sequences["nimblr-minervini-cpr"][index]],
+        )
+        _write(
+            folder / "Minervini_Volume_CPR_Scan.xlsx",
+            [{"Ticker": t, "Date": day.isoformat(), "Close": 1400 + index * 8, "EMA50": 1350,
+              "EMA150": 1280, "EMA200": 1200, "CPR_Top": 1390, "CPR_Pivot": 1385, "CPR_Bottom": 1380,
+              "CPR_Width": 10.0, "CPR_Width_%": 0.45, "Virgin_Above": True, "Low_52W": 900,
+              "High_52W": 1500, "Volume": 1_200_000, "Volume_EMA20": 900_000, "Next_Open": 1405,
+              "Suggested_Stop": 1380, "Risk_Per_Share": 20, "Minervini_Volume": True,
+              "Virgin_CPR_Buy": True, "Narrow_CPR_Breakout": True, "Sections_Passed": 3,
+              "Qualified": True}
+             for t in sequences["minervini-volume-cpr"][index]],
         )
         bullish_fib = folder / "Bullish_Fib_Pinball.xlsx"
         bearish_fib = folder / "Bearish_Fib_Pinball.xlsx"
@@ -259,6 +283,7 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             "rangebound-stocks": folder / "Strangle_Candidate_Analysis.xlsx",
             "minervini-vcp": folder / "Minervini_VCP_Scan.xlsx",
             "nimblr-minervini-cpr": folder / "Nimblr_Minervini_CPR_Scan.xlsx",
+            "minervini-volume-cpr": folder / "Minervini_Volume_CPR_Scan.xlsx",
             "nifty-fib-pinball-bullish": bullish_fib,
             "nifty-fib-pinball-bearish": bearish_fib,
             "merge-option-candidates": folder / "Option_Scan_Candidates.csv",
