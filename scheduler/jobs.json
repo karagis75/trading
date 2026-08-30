@@ -97,7 +97,8 @@
     },
     {
       "name": "nimblr-minervini-cpr",
-      "enabled": true,
+      "note": "Disabled from the daily pass to shorten the 8 AM / first-logon scan. Run nimblr_minervini_cpr_scanner.py manually when needed.",
+      "enabled": false,
       "script": "nimblr_minervini_cpr_scanner.py",
       "args": [
         "--input",

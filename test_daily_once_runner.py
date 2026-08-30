@@ -449,7 +449,6 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "nifty500_xy_intersect.py",
                 "rangeboundstocks.py",
                 "minervini_vcp_scanner.py",
-                "nimblr_minervini_cpr_scanner.py",
                 "minervini_volume_cpr_scanner.py",
                 "nifty_pinball_yahoo.py",
                 "bearish_fib_pinball.py",
@@ -457,6 +456,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "combinedoptionanalyzedv8.py",
             ],
         )
+        nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")
+        self.assertFalse(nimblr.enabled)
         xy_job = next(job for job in jobs if job.name == "nifty500-xy-intersect")
         self.assertEqual(
             xy_job.args,
