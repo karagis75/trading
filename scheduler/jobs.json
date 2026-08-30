@@ -115,6 +115,25 @@
       }
     },
     {
+      "name": "minervini-volume-cpr",
+      "enabled": true,
+      "script": "minervini_volume_cpr_scanner.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "outputs/{date}/Minervini_Volume_CPR_Scan.xlsx"
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "membership_filter": "Qualified=True",
+        "signal_date_column": "Date"
+      }
+    },
+    {
       "name": "nifty-fib-pinball-bullish",
       "enabled": true,
       "script": "nifty_pinball_yahoo.py",
