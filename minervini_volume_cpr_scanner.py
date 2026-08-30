@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,9 +36,10 @@ from nimblr_minervini_cpr_scanner import (
     extract_company_names,
     evaluate_minervini,
     extract_tickers,
-    fetch_history,
+    history_from_chart,
     print_skip_summary,
     read_input_table,
+    reset_yahoo_http_session,
     write_results,
 )
 
@@ -249,6 +251,48 @@ def evaluate_scan(
     }
 
 
+def fetch_volume_cpr_history(symbol: str, config: VolumeCPRScannerConfig) -> pd.DataFrame:
+    """Load daily bars for this scanner without yfinance's crumb cookie.
+
+    ``minervini-volume-cpr`` runs after ``minervini-vcp`` in the daily pass.
+    At that point ``yf.Ticker().history()`` often fails ``fc.yahoo.com`` DNS
+    and logs every listed Nifty name as "possibly delisted". This job uses
+    Yahoo's public chart API first (same path as the Node scanners) so those
+    yfinance ERROR lines are not printed.
+    """
+    last_error: Exception | None = None
+    for attempt in range(config.max_retries):
+        try:
+            frame = history_from_chart(symbol, config.lookback_period)
+            if frame is not None and not frame.empty:
+                if config.request_delay:
+                    time.sleep(config.request_delay)
+                return frame
+            last_error = ValueError(f"empty Yahoo chart data for {symbol}")
+        except Exception as exc:
+            last_error = exc
+            logging.warning(
+                "minervini-volume-cpr Yahoo chart attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                config.max_retries,
+                symbol,
+                exc,
+            )
+            reset_yahoo_http_session()
+        if attempt < config.max_retries - 1:
+            time.sleep(config.retry_delay * (2 ** attempt))
+    if last_error is not None:
+        logging.warning(
+            "minervini-volume-cpr could not fetch %s after %d attempt(s): %s",
+            symbol,
+            config.max_retries,
+            last_error,
+        )
+    if config.request_delay:
+        time.sleep(config.request_delay)
+    return pd.DataFrame()
+
+
 def analyze_symbol(
     symbol: str,
     config: VolumeCPRScannerConfig,
@@ -256,7 +300,7 @@ def analyze_symbol(
     skipped: list[str] | None = None,
 ) -> dict[str, Any] | None:
     try:
-        frame = history if history is not None else fetch_history(symbol, config)
+        frame = history if history is not None else fetch_volume_cpr_history(symbol, config)
         if frame.empty or len(frame) < config.minimum_history:
             if skipped is not None:
                 skipped.append(display_symbol(symbol))
@@ -372,18 +416,40 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Write rows that fail one or more sections (useful for debugging).",
     )
     parser.add_argument("--limit", type=int, default=0, help="Scan only the first N tickers (0 = all).")
+    parser.add_argument(
+        "--lookback",
+        default="2y",
+        help="Yahoo daily lookback period for this scanner (default: 2y).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Yahoo chart retries per ticker (default: 3).",
+    )
+    parser.add_argument(
+        "--request-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to wait after each ticker fetch (default: 0).",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     args = parse_args(argv)
+    # Drop any crumb/session left over from minervini-vcp in the same daily run.
+    reset_yahoo_http_session()
     config = VolumeCPRScannerConfig(
         combine_mode="all" if args.mode == "all" else "score",
         min_sections=args.min_sections if args.mode == "score" else 3,
         narrow_cpr_max_width_pct=args.narrow_cpr_max_width_pct,
         virgin_use_full_cpr=args.virgin_use_full_cpr,
         require_previous_high_breakout=args.require_previous_high_breakout,
+        lookback_period=args.lookback,
+        max_retries=args.max_retries,
+        request_delay=args.request_delay,
     )
 
     try:
