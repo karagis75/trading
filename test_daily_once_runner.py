@@ -5,6 +5,8 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest import mock
+
 import daily_once_runner as runner
 
 
@@ -448,6 +450,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "rangeboundstocks.py",
                 "minervini_vcp_scanner.py",
                 "nimblr_minervini_cpr_scanner.py",
+                "minervini_volume_cpr_scanner.py",
                 "nifty_pinball_yahoo.py",
                 "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",
@@ -540,6 +543,88 @@ class JobsConfigAndCliTests(unittest.TestCase):
             self.assertEqual(first.status, runner.STATUS_SUCCESS)
             second = daily.run()
             self.assertEqual(second.status, runner.STATUS_SKIPPED)
+
+    def test_cli_history_db_flag_reaches_membership_tracker(self) -> None:
+        """Regression test: TRADING_DATABASE_URL / --history-db must reach the
+        tracker used by the scheduled run, not just be defined and ignored."""
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "scan.py").write_text(
+                "import sys\n"
+                "out = sys.argv[sys.argv.index('--output') + 1]\n"
+                "with open(out, 'w', encoding='utf-8') as fh:\n"
+                "    fh.write('Ticker\\nTCS\\n')\n",
+                encoding="utf-8",
+            )
+            (root / "ind_nifty500list.csv").write_text("Ticker\nTCS\n", encoding="utf-8")
+            jobs_path = root / "jobs.json"
+            jobs_path.write_text(
+                json.dumps(
+                    {
+                        "jobs": [
+                            {
+                                "name": "demo-scan",
+                                "script": "scan.py",
+                                "enabled": True,
+                                "args": ["--output", "hits.csv"],
+                                "tracking": {
+                                    "enabled": True,
+                                    "role": "primary_scanner",
+                                    "format": "csv",
+                                    "symbol_column": "Ticker",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            custom_db = root / "custom_history.sqlite3"
+            default_db = root / "scanner_history" / "scanner_history.sqlite3"
+            code = runner.main(
+                [
+                    "--jobs",
+                    str(jobs_path),
+                    "--state",
+                    str(root / "state.json"),
+                    "--lock",
+                    str(root / "run.lock"),
+                    "--log-dir",
+                    str(root / "logs"),
+                    "--repo-root",
+                    str(root),
+                    "--history-db",
+                    str(custom_db),
+                ]
+            )
+            self.assertEqual(code, runner.EXIT_OK)
+            self.assertTrue(custom_db.exists(), "history writes must land at the requested --history-db path")
+            self.assertFalse(
+                default_db.exists(),
+                "the runner must not silently fall back to the default sqlite path",
+            )
+            conn = sqlite3.connect(custom_db)
+            try:
+                names = {row[0] for row in conn.execute("SELECT scanner_id FROM scanners")}
+            finally:
+                conn.close()
+            self.assertIn("demo-scan", names)
+
+    def test_history_db_flag_defaults_to_trading_database_url_env_var(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with mock.patch.dict("os.environ", {"TRADING_DATABASE_URL": str(root / "env-configured.sqlite3")}):
+                import importlib
+
+                reloaded = importlib.reload(runner)
+                try:
+                    parser = reloaded.build_arg_parser()
+                    args = parser.parse_args(["--jobs", str(root / "jobs.json")])
+                    self.assertEqual(args.history_db, str(root / "env-configured.sqlite3"))
+                finally:
+                    importlib.reload(runner)
 
     def test_cli_second_run_same_day_is_skipped(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

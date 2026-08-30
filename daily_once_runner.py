@@ -14,6 +14,7 @@ import csv
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -44,6 +45,12 @@ EXIT_FAILED = 1
 EXIT_ALREADY_RUNNING = 2
 
 LOGGER = logging.getLogger("daily_once_runner")
+
+
+def _redact_db_url(value: str | Path) -> str:
+    """Hide a PostgreSQL password when logging the configured database target."""
+    text = str(value)
+    return re.sub(r"://([^:/@]+):[^@]*@", r"://\1:***@", text)
 
 
 class FileLock:
@@ -574,6 +581,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Directory used as the working folder and as the base for relative job scripts.",
     )
     parser.add_argument(
+        "--history-db",
+        default=DEFAULT_HISTORY_DB,
+        help=(
+            "Membership history database: a SQLite file path or a PostgreSQL URL "
+            "(postgresql://user:pass@host:5432/db). Defaults to the TRADING_DATABASE_URL "
+            "environment variable, falling back to scanner_history/scanner_history.sqlite3."
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Ignore today's success marker and run again.",
@@ -617,7 +633,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         jobs=jobs,
         state_path=args.state,
         lock_path=args.lock,
+        history_db=args.history_db,
     )
+    LOGGER.info("Membership history database target: %s", _redact_db_url(args.history_db))
     report = runner.run(force=args.force)
     print(report.message)
     return exit_code_for(report.status)
