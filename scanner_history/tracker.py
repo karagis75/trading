@@ -123,7 +123,7 @@ class MembershipTracker:
                 INSERT INTO stocks(symbol, company_name, industry, series, isin, active_in_universe, first_universe_date, last_universe_date)
                 VALUES (?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
-                    company_name=excluded.company_name,
+                    company_name=COALESCE(NULLIF(excluded.company_name, ''), stocks.company_name),
                     industry=excluded.industry,
                     series=excluded.series,
                     isin=excluded.isin,

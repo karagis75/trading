@@ -27,6 +27,7 @@ from nimblr_minervini_cpr_scanner import (
     _finite,
     calculate_indicators,
     display_symbol,
+    extract_company_names,
     extract_tickers,
     fetch_history,
     print_skip_summary,
@@ -416,6 +417,7 @@ def _round_result(row: dict[str, Any]) -> dict[str, Any]:
 
 RESULT_COLUMNS = [
     "Ticker",
+    "Company Name",
     "Date",
     "Close",
     "EMA50",
@@ -485,7 +487,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     try:
-        tickers = extract_tickers(read_input_table(args.input, engine=args.engine))
+        input_table = read_input_table(args.input, engine=args.engine)
+        tickers = extract_tickers(input_table)
+        company_names = extract_company_names(input_table)
     except Exception as exc:
         print(f"Input error: {exc}")
         return
@@ -502,6 +506,7 @@ def main(argv: list[str] | None = None) -> None:
         if snapshot is None:
             continue
         if snapshot["Qualified"] or args.include_failures:
+            snapshot["Company Name"] = company_names.get(snapshot["Ticker"], "")
             results.append(snapshot)
 
     output = format_results(results)

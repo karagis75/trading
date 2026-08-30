@@ -17,6 +17,14 @@ def normalize_symbol(value: Any) -> str:
     return ticker
 
 
+def normalize_company_name(value: Any) -> str:
+    """Return a clean text value, treating pandas nulls as missing."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    return "" if not text or text.lower() in {"nan", "none", "null"} else text
+
+
 def parse_date(value: Any) -> str | None:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
@@ -56,10 +64,10 @@ def load_universe(path: str | Path, as_of: date | None = None) -> list[UniverseS
         stocks.append(
             UniverseStock(
                 symbol=symbol,
-                company_name=str(row.get("Company Name") or ""),
-                industry=str(row.get("Industry") or ""),
-                series=str(row.get("Series") or ""),
-                isin=str(row.get("ISIN Code") or ""),
+                company_name=normalize_company_name(row.get("Company Name")),
+                industry=normalize_company_name(row.get("Industry")),
+                series=normalize_company_name(row.get("Series")),
+                isin=normalize_company_name(row.get("ISIN Code")),
             )
         )
     return stocks

@@ -131,6 +131,7 @@ def scanner_day(scanner_id: str, scan_date: str):
         table_rows.append(
             {
                 "symbol": row.get("symbol") or "",
+                "company_name": row.get("company_name") or "",
                 "badge": badge,
                 "cells": row_cells(row, columns),
                 "picked": bool(row.get("picked")),

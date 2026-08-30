@@ -80,6 +80,7 @@ SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
         "title": "Minervini VCP Scanner",
         "columns": [
             "Ticker",
+            "Company Name",
             "Date",
             "Close",
             "EMA50",
@@ -99,6 +100,7 @@ SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
         "title": "Nimblr Minervini CPR",
         "columns": [
             "Ticker",
+            "Company Name",
             "Date",
             "Close",
             "CCI",
@@ -116,6 +118,7 @@ SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
         "title": "Minervini Volume + CPR",
         "columns": [
             "Ticker",
+            "Company Name",
             "Date",
             "Close",
             "EMA50",

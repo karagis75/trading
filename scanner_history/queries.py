@@ -283,8 +283,9 @@ def scanner_day_rows(
         daily = _rows(
             connection,
             """
-            SELECT d.*
+            SELECT d.*, st.company_name
             FROM stock_scanner_daily d
+            LEFT JOIN stocks st ON st.symbol = d.symbol
             WHERE d.run_id = ? AND d.scanner_id = ?
               AND (d.picked = 1 OR d.change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
             ORDER BY COALESCE(d.confidence, 0) DESC, d.symbol
@@ -295,10 +296,11 @@ def scanner_day_rows(
         daily = _rows(
             connection,
             """
-            SELECT *
-            FROM stock_scanner_daily
-            WHERE run_id = ? AND scanner_id = ?
-              AND (picked = 1 OR change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
+            SELECT d.*, st.company_name
+            FROM stock_scanner_daily d
+            LEFT JOIN stocks st ON st.symbol = d.symbol
+            WHERE d.run_id = ? AND d.scanner_id = ?
+              AND (d.picked = 1 OR d.change_type IN ('DROPPED', 'UNIVERSE_REMOVED'))
             ORDER BY
                 CASE change_type
                     WHEN 'ADDED' THEN 0

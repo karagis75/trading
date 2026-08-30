@@ -209,7 +209,12 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "tickers.csv"
             out = Path(tmp) / "Minervini_Volume_CPR_Scan.xlsx"
-            pd.DataFrame({"Ticker": ["TCS"]}).to_csv(src, index=False)
+            pd.DataFrame(
+                {
+                    "Ticker": ["TCS"],
+                    "Company Name": ["Tata Consultancy Services Ltd."],
+                }
+            ).to_csv(src, index=False)
 
             hit = {
                 "Ticker": "TCS",
@@ -248,6 +253,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(out.exists())
             saved = pd.read_excel(out, engine="openpyxl")
             self.assertEqual(list(saved["Ticker"]), ["TCS"])
+            self.assertEqual(list(saved["Company Name"]), ["Tata Consultancy Services Ltd."])
             self.assertIn("qualified setup", captured.getvalue().lower())
 
     def test_analyze_symbol_qualifies_crafted_history(self) -> None:

@@ -102,6 +102,8 @@ def row_cells(row: dict[str, Any], columns: list[str]) -> list[Any]:
     for column in columns:
         if column in {"Ticker", "Symbol", "ticker", "symbol"}:
             value = meta.get(column, symbol)
+        elif column in {"Company Name", "company_name"}:
+            value = meta.get(column) or row.get("company_name")
         else:
             value = meta.get(column)
             if value is None and column in {"Status", "Setup Status", "Wave Position", "Strategy", "X/Y Intersect Rule"}:
