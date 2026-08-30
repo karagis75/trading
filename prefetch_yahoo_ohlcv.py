@@ -12,7 +12,7 @@ import os
 from datetime import date
 
 from nimblr_minervini_cpr_scanner import extract_tickers, read_input_table
-from yahoo_bar_store import DEFAULT_DB, prefetch_symbols
+from yahoo_bar_store import DEFAULT_DB, display_database_url, prefetch_symbols
 
 DEFAULT_INPUT = "ind_nifty500list.csv"
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     fetch_date = date.fromisoformat(args.fetch_date) if args.fetch_date else date.today()
     print(
         f"Prefetching Yahoo daily bars for {len(tickers)} ticker(s) "
-        f"(lookback={args.lookback}) into {args.database}..."
+        f"(lookback={args.lookback}) into {display_database_url(args.database)}..."
     )
     stats = prefetch_symbols(
         tickers,

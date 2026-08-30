@@ -280,6 +280,47 @@ class Nifty500IntersectTests(unittest.TestCase):
         ]
         self.assertEqual(sleeps, [0.05, 0.05])
 
+    def test_screen_skips_request_delay_when_yahoo_cache_hits(self) -> None:
+        import yahoo_bar_store as store
+        from datetime import date
+        from scanner_history.db import connect
+
+        history = make_history(80)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "cache.sqlite3"
+            conn = connect(db)
+            try:
+                store.prefetch_symbols(
+                    ["A", "B"],
+                    period="1mo",
+                    fetch_date=date.today(),
+                    connection=conn,
+                    live_loader=lambda _symbol, _period: history,
+                )
+            finally:
+                conn.close()
+            store.reset_shared_connection()
+            config = scanner.IntersectScannerConfig(
+                request_delay=0.5,
+                fast_dma=8,
+                slow_dma=18,
+            )
+            with patch.dict(
+                __import__("os").environ,
+                {"TRADING_YAHOO_CACHE_DB": str(db)},
+                clear=False,
+            ):
+                with patch.object(scanner, "time") as time_mock:
+                    with patch.object(
+                        scanner.yf, "download", side_effect=AssertionError("no live")
+                    ):
+                        scanner.screen_stocks_with_intersect(
+                            ["A.NS", "B.NS"],
+                            config=config,
+                        )
+            store.reset_shared_connection()
+        self.assertEqual(time_mock.sleep.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
