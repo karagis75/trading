@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from datetime import date
 from pathlib import Path
@@ -37,6 +38,7 @@ class YahooBarStoreTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.now_patch.stop()
+        store.reset_shared_connection()
         self.conn.close()
         self.tmp.cleanup()
 
@@ -128,6 +130,219 @@ class YahooBarStoreTests(unittest.TestCase):
     def test_display_symbol_normalizes_ns_suffix(self) -> None:
         self.assertEqual(store.display_symbol("TCS.NS"), "TCS")
         self.assertEqual(store.yahoo_symbol("TCS"), "TCS.NS")
+
+    def test_display_database_url_redacts_password(self) -> None:
+        self.assertEqual(
+            store.display_database_url(
+                "postgresql://trading_app:secret@localhost:5432/trading_history"
+            ),
+            "postgresql://trading_app:***@localhost:5432/trading_history",
+        )
+
+    def test_prefetched_short_listing_does_not_call_live(self) -> None:
+        short = sample_bars(8, end="2026-08-28")
+        store.prefetch_symbols(
+            ["EMMVEE"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: short,
+        )
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        loaded = store.get_daily_history(
+            "EMMVEE",
+            period="1y",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+        )
+        self.assertEqual(len(loaded), 8)
+        live.assert_not_called()
+        self.assertEqual(store.last_history_source(), "cache")
+
+    def test_prefetch_day_blocks_live_for_symbols_without_rows(self) -> None:
+        store.prefetch_symbols(
+            ["TCS"],
+            period="1mo",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: sample_bars(20),
+        )
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        loaded = store.get_daily_history(
+            "MISSING",
+            period="1y",
+            live_loader=live,
+            connection=self.conn,
+            fetch_date=date(2026, 8, 30),
+        )
+        self.assertTrue(loaded.empty)
+        live.assert_not_called()
+        self.assertEqual(store.last_history_source(), "empty")
+
+    def test_reuses_one_database_connection_across_tickers(self) -> None:
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            ["TCS", "INFY", "ABB"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        store.reset_shared_connection()
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        with patch.object(store, "connect", wraps=connect) as mocked:
+            for symbol in ("TCS", "INFY", "ABB"):
+                frame = store.get_daily_history(
+                    symbol,
+                    period="2y",
+                    live_loader=live,
+                    database_url=self.db,
+                    fetch_date=date(2026, 8, 30),
+                )
+                self.assertEqual(len(frame), 40)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(store.cache_stats()["connects"], 1)
+        self.assertEqual(store.cache_stats()["live"], 0)
+        self.assertEqual(store.cache_stats()["hits"], 3)
+        live.assert_not_called()
+
+    def test_preloads_universe_once_after_prefetch(self) -> None:
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            ["TCS", "INFY", "ABB"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        with patch.object(store, "load_cached_universe", wraps=store.load_cached_universe) as preload:
+            for symbol in ("TCS", "INFY", "ABB"):
+                frame = store.get_daily_history(
+                    symbol,
+                    period="2y",
+                    live_loader=live,
+                    connection=self.conn,
+                    fetch_date=date(2026, 8, 30),
+                )
+                self.assertEqual(len(frame), 40)
+        self.assertEqual(preload.call_count, 1)
+        self.assertEqual(store.cache_stats()["preloads"], 1)
+        live.assert_not_called()
+
+    def test_cache_replay_does_not_reconnect_per_ticker(self) -> None:
+        symbols = [f"S{index:03d}" for index in range(40)]
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            symbols,
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        store.reset_shared_connection()
+        connects = {"n": 0}
+        real_connect = connect
+
+        def slow_connect(path, **kwargs):
+            connects["n"] += 1
+            time.sleep(0.02)
+            return real_connect(path, **kwargs)
+
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        started = time.perf_counter()
+        with patch.object(store, "connect", side_effect=slow_connect):
+            for symbol in symbols:
+                frame = store.get_daily_history(
+                    symbol,
+                    period="2y",
+                    live_loader=live,
+                    database_url=self.db,
+                    fetch_date=date(2026, 8, 30),
+                )
+                self.assertEqual(len(frame), 40)
+        elapsed = time.perf_counter() - started
+        self.assertEqual(connects["n"], 1)
+        self.assertEqual(store.cache_stats()["live"], 0)
+        self.assertLess(elapsed, 0.02 * len(symbols) / 2)
+
+    def test_enabled_cache_replay_scanners_do_not_call_yahoo(self) -> None:
+        import bearisbiasnifty500 as bearish
+        import bullishbiasnifty500 as bullish
+        import fib_pinball_common as pinball
+        import minervini_volume_cpr_scanner as volume
+        import nifty500_xy_intersect as xy
+        import nimblr_minervini_cpr_scanner as nimblr
+        import rangeboundstocks as rangebound
+
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            ["ABB"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        store.reset_shared_connection()
+        live_error = AssertionError("Yahoo must not be called after prefetch")
+        env = {
+            "TRADING_YAHOO_CACHE_DB": str(self.db),
+            "TRADING_DATABASE_URL": str(self.db),
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch.object(bullish.yf, "Ticker", side_effect=live_error):
+                with patch.object(bearish.yf, "Ticker", side_effect=live_error):
+                    with patch.object(rangebound.yf, "Ticker", side_effect=live_error):
+                        with patch.object(xy.yf, "download", side_effect=live_error):
+                            with patch.object(pinball.yf, "Ticker", side_effect=live_error):
+                                with patch.object(
+                                    nimblr, "history_from_chart", side_effect=live_error
+                                ):
+                                    with patch.object(
+                                        nimblr,
+                                        "_download_yahoo_history",
+                                        side_effect=live_error,
+                                    ):
+                                        with patch.object(
+                                            volume,
+                                            "history_from_chart",
+                                            side_effect=live_error,
+                                        ):
+                                            bullish.analyze_symbol(
+                                                "ABB", bullish.BullishScannerConfig()
+                                            )
+                                            bearish.analyze_symbol(
+                                                "ABB", bearish.BearishScannerConfig()
+                                            )
+                                            rangebound.analyze_symbol(
+                                                "ABB", rangebound.StrangleScannerConfig()
+                                            )
+                                            xy_bars = xy._download_history(
+                                                "ABB", xy.IntersectScannerConfig()
+                                            )
+                                            vcp = nimblr.fetch_history(
+                                                "ABB",
+                                                nimblr.CombinedScannerConfig(
+                                                    lookback_period="2y"
+                                                ),
+                                            )
+                                            cpr = volume.fetch_volume_cpr_history(
+                                                "ABB",
+                                                volume.VolumeCPRScannerConfig(
+                                                    lookback_period="2y",
+                                                    max_retries=1,
+                                                    retry_delay=0.0,
+                                                ),
+                                            )
+                                            fib = pinball.fetch_history(
+                                                "ABB", pinball.PinballConfig()
+                                            )
+        self.assertEqual(len(xy_bars), 40)
+        self.assertEqual(len(vcp), 40)
+        self.assertEqual(len(cpr), 40)
+        self.assertEqual(len(fib), 40)
+        self.assertEqual(store.cache_stats()["live"], 0)
 
     def test_prefetch_cli_writes_and_exits_zero(self) -> None:
         history = sample_bars(8)

@@ -460,6 +460,25 @@ class JobsConfigAndCliTests(unittest.TestCase):
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")
         self.assertFalse(nimblr.enabled)
+        cache_replay = {
+            "bullish-bias-nifty500",
+            "bearish-bias-nifty500",
+            "nifty500-xy-intersect",
+            "rangebound-stocks",
+            "minervini-vcp",
+            "minervini-volume-cpr",
+            "nifty-fib-pinball-bullish",
+            "nifty-fib-pinball-bearish",
+        }
+        inventory_only = {
+            "merge-option-candidates",
+            "combined-option-v8",
+            "validate-2026-08-30-outputs",
+        }
+        enabled_names = {job.name for job in enabled}
+        self.assertTrue(cache_replay.issubset(enabled_names))
+        self.assertTrue(inventory_only.issubset(enabled_names))
+        self.assertNotIn("nimblr-minervini-cpr", enabled_names)
         xy_job = next(job for job in jobs if job.name == "nifty500-xy-intersect")
         self.assertEqual(
             xy_job.args,

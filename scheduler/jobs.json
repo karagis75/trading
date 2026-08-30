@@ -4,7 +4,7 @@
   "jobs": [
     {
       "name": "prefetch-yahoo-ohlcv",
-      "note": "Downloads 2y of Nifty 500 Yahoo daily bars once. Later jobs read yahoo_ohlcv_daily from TRADING_DATABASE_URL (PostgreSQL) or the local SQLite history file.",
+      "note": "Downloads 2y of Nifty 500 Yahoo daily bars once into yahoo_ohlcv_daily. Every later cache-replay job must read that table and must not call yfinance again.",
       "enabled": true,
       "script": "prefetch_yahoo_ohlcv.py",
       "args": [
@@ -22,6 +22,7 @@
     },
     {
       "name": "bullish-bias-nifty500",
+      "note": "Cache replay: get_daily_history reads today's prefetch. Live yfinance only if prefetch-yahoo-ohlcv has not run today.",
       "enabled": true,
       "script": "bullishbiasnifty500.py",
       "args": [

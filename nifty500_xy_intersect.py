@@ -427,7 +427,10 @@ def screen_stocks_with_intersect(
         except Exception as exc:
             logging.warning("Error processing ticker %s: %s", ticker, exc)
         finally:
-            if settings.request_delay > 0 and index < len(tickers):
+            from yahoo_bar_store import last_history_source
+
+            skip_throttle = fetch is _download_history and last_history_source() != "live"
+            if settings.request_delay > 0 and index < len(tickers) and not skip_throttle:
                 time.sleep(settings.request_delay)
 
     return pd.DataFrame(results, columns=RESULT_COLUMNS)
