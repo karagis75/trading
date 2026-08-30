@@ -29,6 +29,7 @@ from nimblr_minervini_cpr_scanner import (
     display_symbol,
     extract_tickers,
     fetch_history,
+    print_skip_summary,
     read_input_table,
     write_results,
 )
@@ -384,11 +385,15 @@ def analyze_symbol(
     symbol: str,
     config: VCPScannerConfig,
     history: pd.DataFrame | None = None,
+    skipped: list[str] | None = None,
 ) -> dict[str, Any] | None:
     try:
         frame = history if history is not None else fetch_history(symbol, config)
         if frame.empty or len(frame) < config.minimum_history:
-            logging.warning("Insufficient historical data for %s", symbol)
+            if skipped is not None:
+                skipped.append(display_symbol(symbol))
+            else:
+                logging.debug("Insufficient historical data for %s", symbol)
             return None
         frame = calculate_indicators(frame, config)
         result = evaluate_scan(frame, config)
@@ -491,8 +496,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     results: list[dict[str, Any]] = []
+    skipped: list[str] = []
     for ticker in tickers:
-        snapshot = analyze_symbol(ticker, config)
+        snapshot = analyze_symbol(ticker, config, skipped=skipped)
         if snapshot is None:
             continue
         if snapshot["Qualified"] or args.include_failures:
@@ -501,6 +507,7 @@ def main(argv: list[str] | None = None) -> None:
     output = format_results(results)
     write_results(output, args.output)
     qualified = int(output["Qualified"].sum()) if not output.empty and "Qualified" in output.columns else 0
+    print_skip_summary(skipped, config.minimum_history)
     print(
         f"Scan complete. Found {qualified} qualified setup(s) "
         f"({len(output)} row(s) written). Saved to '{args.output}'."

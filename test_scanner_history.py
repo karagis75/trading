@@ -278,6 +278,7 @@ class RunnerTrackingTests(unittest.TestCase):
             "rangebound-stocks",
             "minervini-vcp",
             "nimblr-minervini-cpr",
+            "minervini-volume-cpr",
             "nifty-fib-pinball-bullish",
             "nifty-fib-pinball-bearish",
             "merge-option-candidates",
@@ -286,6 +287,7 @@ class RunnerTrackingTests(unittest.TestCase):
         self.assertEqual(set(tracked), expected)
         self.assertEqual(tracked["minervini-vcp"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nimblr-minervini-cpr"].membership_filter, "Qualified=True")
+        self.assertEqual(tracked["minervini-volume-cpr"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nifty-fib-pinball-bullish"].sheet, "All")
         self.assertEqual(tracked["combined-option-v8"].role, "downstream")
         self.assertEqual(tracked["merge-option-candidates"].role, "aggregator")

@@ -217,6 +217,33 @@ class TimezoneAndEmptyOutputTests(unittest.TestCase):
             self.assertEqual(len(loaded), 0)
 
 
+class NewerListingHistoryTests(unittest.TestCase):
+    def test_default_minimum_history_allows_sub_year_listings(self) -> None:
+        config = scanner.CombinedScannerConfig()
+        self.assertEqual(config.minimum_history, 223)
+        self.assertLess(config.minimum_history, 254)
+
+    def test_52_week_uses_six_month_floor_for_newer_listings(self) -> None:
+        frame = uptrend_ohlcv(200)
+        out = scanner.calculate_indicators(frame, scanner.CombinedScannerConfig())
+        last = out.iloc[-1]
+        self.assertTrue(np.isfinite(last["HIGH_52W"]))
+        self.assertTrue(np.isfinite(last["LOW_52W"]))
+
+    def test_short_history_is_summarized_not_warned(self) -> None:
+        config = short_config()
+        skipped: list[str] = []
+        with self.assertNoLogs("nimblr_minervini_cpr_scanner", level="WARNING"):
+            results = scanner.scan_tickers(
+                ["TENNIND", "URBANCO"],
+                config,
+                history_loader=lambda *_args, **_kwargs: pd.DataFrame(),
+                skipped=skipped,
+            )
+        self.assertEqual(results, [])
+        self.assertEqual(skipped, ["TENNIND", "URBANCO"])
+
+
 class IndicatorMathTests(unittest.TestCase):
     def test_ema_matches_pandas_ewm(self) -> None:
         close = pd.Series([10.0, 11.0, 12.0, 13.0, 14.0])

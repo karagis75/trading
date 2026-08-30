@@ -61,6 +61,7 @@ class CombinedScannerConfig:
     atr_breakout_multiplier: float = 1.0
     ema200_lookback: int = 21
     week52_bars: int = 252
+    week52_min_periods: int = 126
     min_low_multiple: float = 1.30
     min_high_multiple: float = 0.75
     volume_ema: int = 20
@@ -70,10 +71,20 @@ class CombinedScannerConfig:
     min_sections: int = 3
 
     @property
+    def effective_week52_min_periods(self) -> int:
+        """Bars required for the 52-week high/low proxy.
+
+        Newer Nifty 500 listings (for example TENNIND, URBANCO) do not yet
+        have 252 sessions. Use six months of history as a listing-range
+        stand-in so they can still be scored against the Trend Template.
+        """
+        return max(1, min(self.week52_min_periods, self.week52_bars))
+
+    @property
     def minimum_history(self) -> int:
         return max(
             self.ema_200 + self.ema200_lookback + 2,
-            self.week52_bars + 2,
+            self.effective_week52_min_periods + 2,
             self.cci_period + 3,
             self.atr_period + 3,
             self.volume_ema + 3,
@@ -336,8 +347,9 @@ def calculate_indicators(df: pd.DataFrame, config: CombinedScannerConfig) -> pd.
         body.abs() >= config.body_range_ratio * candle_range.replace(0, np.nan)
     )
 
-    frame["LOW_52W"] = low.rolling(window=config.week52_bars, min_periods=config.week52_bars).min()
-    frame["HIGH_52W"] = high.rolling(window=config.week52_bars, min_periods=config.week52_bars).max()
+    week52_floor = config.effective_week52_min_periods
+    frame["LOW_52W"] = low.rolling(window=config.week52_bars, min_periods=week52_floor).min()
+    frame["HIGH_52W"] = high.rolling(window=config.week52_bars, min_periods=week52_floor).max()
     frame["EMA200_1M_AGO"] = frame["EMA200"].shift(config.ema200_lookback)
     return frame
 
@@ -351,6 +363,16 @@ def _finite(value: Any) -> bool:
 
 def _condition(name: str, passed: bool, detail: str = "") -> ConditionResult:
     return ConditionResult(name=name, passed=bool(passed), detail=detail)
+
+
+def print_skip_summary(skipped: list[str], min_bars: int) -> None:
+    """One-line note for newer listings that lack enough daily history."""
+    if not skipped:
+        return
+    print(
+        f"Skipped {len(skipped)} newer listing(s) with fewer than {min_bars} "
+        f"daily bars: {', '.join(skipped)}"
+    )
 
 
 def evaluate_nimblr(frame: pd.DataFrame, index: int, config: CombinedScannerConfig) -> SectionResult:
@@ -576,11 +598,15 @@ def analyze_symbol(
     symbol: str,
     config: CombinedScannerConfig,
     history: pd.DataFrame | None = None,
+    skipped: list[str] | None = None,
 ) -> dict[str, Any] | None:
     try:
         frame = history if history is not None else fetch_history(symbol, config)
         if frame.empty or len(frame) < config.minimum_history:
-            logging.warning("Insufficient historical data for %s", symbol)
+            if skipped is not None:
+                skipped.append(display_symbol(symbol))
+            else:
+                logging.debug("Insufficient historical data for %s", symbol)
             return None
         frame = calculate_indicators(frame, config)
         result = evaluate_combined(frame, config)
@@ -598,12 +624,14 @@ def scan_tickers(
     config: CombinedScannerConfig,
     include_failures: bool = False,
     history_loader=fetch_history,
+    skipped: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    skipped_names = skipped if skipped is not None else []
     for ticker in tickers:
         try:
             history = history_loader(ticker, config)
-            result = analyze_symbol(ticker, config, history=history)
+            result = analyze_symbol(ticker, config, history=history, skipped=skipped_names)
         except Exception as exc:
             logging.warning("Error processing ticker %s: %s", ticker, exc)
             continue
@@ -611,6 +639,8 @@ def scan_tickers(
             continue
         if result["Qualified"] or include_failures:
             results.append(result)
+    if skipped is None and skipped_names:
+        print_skip_summary(skipped_names, config.minimum_history)
     return results
 
 

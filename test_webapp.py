@@ -625,5 +625,150 @@ class MinerviniVCPScannerViewTests(unittest.TestCase):
         self.assertIn(b"Minervini VCP Scanner", home.data)
 
 
+class MinerviniVolumeCPRScannerViewTests(unittest.TestCase):
+    def setUp(self) -> None:
+        invalidate_cache()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.universe = self.root / "universe.csv"
+        self.db_path = self.root / "history.sqlite3"
+        write_universe(self.universe, ["CIPLA", "DRREDDY", "SUNPHARMA", "DIVISLAB"])
+        self.tracker = MembershipTracker.from_path(self.db_path, self.universe)
+        self.tracking = TrackingConfig(
+            enabled=True,
+            role="primary_scanner",
+            format="xlsx",
+            symbol_column="Ticker",
+            membership_filter="Qualified=True",
+            signal_date_column="Date",
+        )
+        self.day = date(2026, 8, 30)
+        output = self.root / "Minervini_Volume_CPR_Scan.xlsx"
+        write_hits(
+            output,
+            [
+                {
+                    "Ticker": "CIPLA",
+                    "Date": self.day.isoformat(),
+                    "Close": 1540.0,
+                    "EMA50": 1480.0,
+                    "EMA150": 1400.0,
+                    "EMA200": 1320.0,
+                    "CPR_Top": 1525.0,
+                    "CPR_Width_%": 0.42,
+                    "Virgin_Above": True,
+                    "Minervini_Volume": True,
+                    "Virgin_CPR_Buy": True,
+                    "Narrow_CPR_Breakout": True,
+                    "Sections_Passed": 3,
+                    "Qualified": True,
+                },
+                {
+                    "Ticker": "SUNPHARMA",
+                    "Date": self.day.isoformat(),
+                    "Close": 1710.0,
+                    "EMA50": 1650.0,
+                    "EMA150": 1580.0,
+                    "EMA200": 1500.0,
+                    "CPR_Top": 1690.0,
+                    "CPR_Width_%": 0.81,
+                    "Virgin_Above": False,
+                    "Minervini_Volume": True,
+                    "Virgin_CPR_Buy": False,
+                    "Narrow_CPR_Breakout": False,
+                    "Sections_Passed": 1,
+                    "Qualified": False,
+                },
+            ],
+        )
+        self.tracker.ingest_output(
+            scanner_id="minervini-volume-cpr",
+            tracking=self.tracking,
+            scan_date=self.day,
+            output_path=output,
+            job_ok=True,
+        )
+
+        jobs_path = self.root / "jobs.json"
+        jobs_path.write_text(
+            json.dumps(
+                {
+                    "jobs": [
+                        {
+                            "name": "bullish-bias-nifty500",
+                            "enabled": True,
+                            "script": "bullishbiasnifty500.py",
+                            "tracking": {"enabled": True, "role": "primary_scanner"},
+                        },
+                        {
+                            "name": "minervini-volume-cpr",
+                            "enabled": True,
+                            "script": "minervini_volume_cpr_scanner.py",
+                            "tracking": {
+                                "enabled": True,
+                                "role": "primary_scanner",
+                                "membership_filter": "Qualified=True",
+                            },
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config = AppConfig(
+            database_url=str(self.db_path),
+            jobs_path=jobs_path,
+            jobs=[
+                JobMeta(name="bullish-bias-nifty500", enabled=True, role="primary_scanner"),
+                JobMeta(name="minervini-volume-cpr", enabled=True, role="primary_scanner"),
+            ],
+        )
+        self.client = create_app(self.config).test_client()
+
+    def tearDown(self) -> None:
+        self.tracker.close()
+        self.tmp.cleanup()
+
+    def test_minervini_volume_cpr_appears_in_scanner_index_and_day_view(self) -> None:
+        index = self.client.get("/scanners/")
+        self.assertEqual(index.status_code, 200)
+        self.assertIn(b"Minervini Volume + CPR", index.data)
+        self.assertIn(b"minervini-volume-cpr", index.data)
+        self.assertIn(
+            f"/scanners/minervini-volume-cpr/{self.day.isoformat()}".encode(),
+            index.data,
+        )
+
+        day = self.client.get(f"/scanners/minervini-volume-cpr/{self.day.isoformat()}")
+        self.assertEqual(day.status_code, 200)
+        self.assertIn(b"CIPLA", day.data)
+        self.assertIn(b"CPR_Width_%", day.data)
+        self.assertIn(b"Virgin_Above", day.data)
+        self.assertNotIn(b"SUNPHARMA", day.data)
+
+        home = self.client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"Minervini Volume + CPR", home.data)
+
+    def test_scheduled_scanner_appears_on_home_before_ingest(self) -> None:
+        """A job in jobs.json must show on the home health strip even with no run."""
+        jobs_path = self.root / "jobs.json"
+        empty_db = self.root / "empty.sqlite3"
+        MembershipTracker.from_path(empty_db, self.universe).close()
+        config = AppConfig(
+            database_url=str(empty_db),
+            jobs_path=jobs_path,
+            jobs=[
+                JobMeta(name="minervini-volume-cpr", enabled=True, role="primary_scanner"),
+            ],
+        )
+        client = create_app(config).test_client()
+        invalidate_cache()
+        home = client.get("/")
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"Minervini Volume + CPR", home.data)
+        self.assertIn(b"/scanners/minervini-volume-cpr", home.data)
+
+
 if __name__ == "__main__":
     unittest.main()
