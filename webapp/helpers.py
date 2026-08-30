@@ -167,6 +167,42 @@ def enrich_scanner_index(
     return ordered
 
 
+def enrich_health(
+    rows: list[dict[str, Any]],
+    jobs: list[Any],
+) -> list[dict[str, Any]]:
+    """Merge scheduled jobs into the homepage health strip.
+
+    ``day_statuses`` only returns scanners already ingested into history. A
+    newly scheduled job (Excel written, tracking enabled) would otherwise
+    vanish from the home page until the first successful ingest.
+    """
+    by_id = {row["scanner_id"]: row for row in rows}
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for job in jobs:
+        row = dict(
+            by_id.get(job.name)
+            or {
+                "scanner_id": job.name,
+                "status": None,
+                "result_count": None,
+            }
+        )
+        row["title"] = display_name_for(job.name, row.get("display_name"))
+        row["status_css"] = status_css(row.get("status"))
+        ordered.append(row)
+        seen.add(job.name)
+    for scanner_id, row in by_id.items():
+        if scanner_id in seen:
+            continue
+        payload = dict(row)
+        payload["title"] = display_name_for(scanner_id, payload.get("display_name"))
+        payload["status_css"] = status_css(payload.get("status"))
+        ordered.append(payload)
+    return ordered
+
+
 def _decorate_scanner_row(row: dict[str, Any], job: Any | None) -> None:
     scanner_id = row["scanner_id"]
     row["title"] = display_name_for(scanner_id, row.get("display_name"))
@@ -184,6 +220,7 @@ __all__ = [
     "change_badge",
     "close_db",
     "display_name_for",
+    "enrich_health",
     "enrich_scanner_index",
     "get_config",
     "get_db",
