@@ -4,7 +4,7 @@
   "jobs": [
     {
       "name": "prefetch-yahoo-ohlcv",
-      "note": "Downloads 2y of Nifty 500 Yahoo daily bars once into yahoo_ohlcv_daily. Every later cache-replay job must read that table and must not call yfinance again.",
+      "note": "Writes Nifty 500 daily bars into PostgreSQL yahoo_ohlcv_daily (not a folder). New symbols download 2y; names already in the table fetch only the gap since MAX(bar_date) plus 5 overlap days.",
       "enabled": true,
       "script": "prefetch_yahoo_ohlcv.py",
       "args": [

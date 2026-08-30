@@ -87,17 +87,22 @@ The runner reads those files and stores membership history in PostgreSQL.
 
 ## Shared Yahoo daily-bar cache
 
-The first scheduled job, `prefetch-yahoo-ohlcv`, downloads two years of daily
-OHLCV for the Nifty 500 universe **once** and writes it to:
+The first scheduled job, `prefetch-yahoo-ohlcv`, stores Nifty 500 daily OHLCV
+in PostgreSQL (or local SQLite if `TRADING_DATABASE_URL` is unset). There is
+**no folder of 2-year bar files**. The cache is these tables in
+`trading_history`:
 
-- `yahoo_ohlcv_daily` (one row per symbol per session)
+- `yahoo_ohlcv_daily` (one row per symbol per session; this is the 2-year history)
 - `yahoo_ohlcv_prefetch` (per-symbol status for that calendar day)
 
-These tables live in the same database as membership history
-(`TRADING_DATABASE_URL`, or `scanner_history\scanner_history.sqlite3` when
-that variable is unset). Every later Yahoo scanner
-(`bullish-bias-nifty500`, `minervini-volume-cpr`, fib pinball, and the rest)
-reads those bars instead of calling Yahoo again.
+A first-time symbol downloads two years. On later mornings the job reads
+`MAX(bar_date)` for each name and requests only the gap plus a few overlap
+days, then upserts those rows. Scanner Excel/CSV files under
+`outputs\YYYY-MM-DD` are hit lists, not the raw Yahoo bars.
+
+Every later Yahoo scanner (`bullish-bias-nifty500`, `minervini-volume-cpr`,
+fib pinball, and the rest) reads `yahoo_ohlcv_daily` instead of calling Yahoo
+again.
 
 If a ticker is missing from the cache, that scanner falls back to a live
 Yahoo chart request and stores the result for the remainder of the day.

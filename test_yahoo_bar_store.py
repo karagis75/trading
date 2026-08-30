@@ -139,6 +139,54 @@ class YahooBarStoreTests(unittest.TestCase):
             "postgresql://trading_app:***@localhost:5432/trading_history",
         )
 
+    def test_refresh_period_is_gap_plus_overlap_not_full_lookback(self) -> None:
+        self.assertEqual(
+            store.refresh_lookback_period(None, fetch_date=date(2026, 8, 31), full_period="2y"),
+            "2y",
+        )
+        self.assertEqual(
+            store.refresh_lookback_period(
+                date(2026, 8, 28), fetch_date=date(2026, 8, 31), full_period="2y"
+            ),
+            "8d",
+        )
+        self.assertEqual(
+            store.refresh_lookback_period(
+                date(2026, 4, 1), fetch_date=date(2026, 8, 31), full_period="2y"
+            ),
+            "2y",
+        )
+
+    def test_incremental_prefetch_keeps_existing_bars_and_requests_gap(self) -> None:
+        history = sample_bars(40, end="2026-08-28")
+        store.prefetch_symbols(
+            ["TCS"],
+            period="2y",
+            fetch_date=date(2026, 8, 28),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        requested: list[str] = []
+
+        def incremental_loader(_symbol: str, period: str) -> pd.DataFrame:
+            requested.append(period)
+            return sample_bars(3, end="2026-08-31")
+
+        stats = store.prefetch_symbols(
+            ["TCS", "NEWCO"],
+            period="2y",
+            fetch_date=date(2026, 8, 31),
+            connection=self.conn,
+            live_loader=incremental_loader,
+        )
+        self.assertEqual(requested, ["8d", "2y"])
+        self.assertEqual(stats["incremental"], 1)
+        self.assertEqual(stats["full"], 1)
+        loaded = store.load_cached_history(self.conn, "TCS", ignore_cutoff=True)
+        self.assertGreaterEqual(len(loaded), 40)
+        self.assertEqual(pd.Timestamp(loaded.index.max()).date(), date(2026, 8, 31))
+        self.assertEqual(store.latest_cached_bar(self.conn, "TCS"), date(2026, 8, 31))
+
     def test_prefetched_short_listing_does_not_call_live(self) -> None:
         short = sample_bars(8, end="2026-08-28")
         store.prefetch_symbols(

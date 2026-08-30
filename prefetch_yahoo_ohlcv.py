@@ -1,7 +1,10 @@
-"""First daily-schedule job: download Nifty 500 Yahoo bars once and store them.
+"""First daily-schedule job: refresh Nifty 500 Yahoo bars in PostgreSQL.
 
-Later scanners read ``yahoo_ohlcv_daily`` from the same SQLite/PostgreSQL
-database instead of calling Yahoo Finance again.
+Bars live in ``yahoo_ohlcv_daily`` (same database as membership history), not
+in a folder. New symbols download two years. Names already stored request
+only the gap since ``MAX(bar_date)`` plus a few overlap days.
+
+Later scanners read that table instead of calling Yahoo Finance again.
 """
 
 from __future__ import annotations
@@ -77,7 +80,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(
         f"Yahoo prefetch complete. success={stats['success']} empty={stats['empty']} "
-        f"error={stats['error']} bars={stats['bars']}."
+        f"error={stats['error']} bars={stats['bars']} "
+        f"incremental={stats.get('incremental', 0)} full={stats.get('full', 0)}."
     )
     if stats["success"] == 0 and tickers:
         print("No tickers were stored; later scanners will fall back to live Yahoo calls.")

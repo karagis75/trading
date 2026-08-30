@@ -71,6 +71,9 @@ ON CONFLICT(fetch_date, symbol) DO UPDATE SET
 """
 
 LiveLoader = Callable[[str, str], pd.DataFrame]
+INCREMENTAL_OVERLAP_DAYS = 5
+INCREMENTAL_MIN_DAYS = 7
+INCREMENTAL_STALE_DAYS = 120
 
 _LOCK = threading.Lock()
 _SHARED_CONN: Any | None = None
@@ -276,6 +279,35 @@ def prefetch_succeeded(connection: Any, symbol: str, fetch_date: date | str) -> 
         (day, display_symbol(symbol)),
     ).fetchone()
     return bool(row) and str(_row_get(row, "status")) == "success"
+
+
+def latest_cached_bar(connection: Any, symbol: str) -> date | None:
+    """Latest session date already stored for this ticker, if any."""
+    row = connection.execute(
+        "SELECT MAX(bar_date) AS last_bar FROM yahoo_ohlcv_daily WHERE symbol = ?",
+        (display_symbol(symbol),),
+    ).fetchone()
+    value = _row_get(row, "last_bar") if row is not None else None
+    if value in (None, ""):
+        return None
+    return pd.Timestamp(value).date()
+
+
+def refresh_lookback_period(
+    last_bar: date | None,
+    *,
+    fetch_date: date,
+    full_period: str = "2y",
+    overlap_days: int = INCREMENTAL_OVERLAP_DAYS,
+) -> str:
+    """Yahoo period for a refresh: full lookback, or only the gap plus overlap."""
+    if last_bar is None:
+        return full_period
+    gap = max(0, (fetch_date - last_bar).days)
+    if gap > INCREMENTAL_STALE_DAYS:
+        return full_period
+    needed = max(gap + int(overlap_days), INCREMENTAL_MIN_DAYS)
+    return f"{int(needed)}d"
 
 
 def prefetch_day_ready(connection: Any, fetch_date: date | str) -> bool:
@@ -599,11 +631,26 @@ def prefetch_symbols(
     if conn is None:
         conn = connect(cache_database_url(database_url) or DEFAULT_DB)
         opened = True
-    stats = {"success": 0, "empty": 0, "error": 0, "bars": 0}
+    stats = {
+        "success": 0,
+        "empty": 0,
+        "error": 0,
+        "bars": 0,
+        "incremental": 0,
+        "full": 0,
+    }
     try:
         for symbol in tickers:
             try:
-                frame = loader(symbol, period)
+                last_bar = latest_cached_bar(conn, symbol)
+                request_period = refresh_lookback_period(
+                    last_bar, fetch_date=day, full_period=period
+                )
+                if request_period == period:
+                    stats["full"] += 1
+                else:
+                    stats["incremental"] += 1
+                frame = loader(symbol, request_period)
                 if frame is None or frame.empty:
                     record_prefetch(
                         conn, symbol, pd.DataFrame(), fetch_date=day, status="empty"
@@ -611,7 +658,10 @@ def prefetch_symbols(
                     stats["empty"] += 1
                 else:
                     stats["bars"] += upsert_bars(conn, symbol, frame)
-                    record_prefetch(conn, symbol, frame, fetch_date=day, status="success")
+                    stored = load_cached_history(conn, symbol, ignore_cutoff=True)
+                    record_prefetch(
+                        conn, symbol, stored, fetch_date=day, status="success"
+                    )
                     stats["success"] += 1
             except Exception as exc:
                 record_prefetch(
