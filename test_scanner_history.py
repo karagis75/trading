@@ -33,7 +33,27 @@ def write_universe(path: Path, tickers: list[str]) -> None:
     ).to_csv(path, index=False)
 
 
+class FakePostgresCursor:
+    """Mirrors psycopg3's Cursor: executemany() lives here, not on Connection."""
+
+    def __init__(self, owner: "FakePostgresConnection") -> None:
+        self._owner = owner
+
+    def executemany(self, sql, params):
+        self._owner.executed.append((sql, tuple(params)))
+        return self
+
+    def __enter__(self) -> "FakePostgresCursor":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
 class FakePostgresConnection:
+    """Mirrors psycopg3's Connection: execute() is a shortcut, but
+    executemany() only exists on a Cursor (obtained via cursor())."""
+
     def __init__(self, fail_sql: str | None = None) -> None:
         self.executed: list[tuple[str, tuple]] = []
         self.rollback_calls = 0
@@ -45,9 +65,8 @@ class FakePostgresConnection:
             raise RuntimeError(f"syntax error at or near \"{sql.split()[0]}\"")
         return self
 
-    def executemany(self, sql, params):
-        self.executed.append((sql, tuple(params)))
-        return self
+    def cursor(self) -> FakePostgresCursor:
+        return FakePostgresCursor(self)
 
     def commit(self):
         pass
@@ -90,6 +109,33 @@ class DatabaseCompatibilityTests(unittest.TestCase):
         # A later, valid query must still work on the same connection object.
         connection.execute("SELECT 1")
         self.assertEqual(fake.executed[-1][0], "SELECT 1")
+
+    def test_postgres_wrapper_executemany_uses_a_cursor(self) -> None:
+        """Regression test: psycopg3's Connection has no executemany(); only
+        Cursor does. Calling connection.executemany() directly used to raise
+        AttributeError against a real psycopg3 connection (only the test's
+        looser fake let this slip through previously)."""
+        fake = FakePostgresConnection()
+        connection = db.PostgresConnection(fake)
+
+        connection.executemany(
+            "INSERT INTO stocks(symbol, industry) VALUES (?, ?)",
+            [("TCS", "IT"), ("INFY", "IT")],
+        )
+
+        self.assertEqual(
+            fake.executed[0][0],
+            "INSERT INTO stocks(symbol, industry) VALUES (%s, %s)",
+        )
+        self.assertEqual(fake.executed[0][1], (("TCS", "IT"), ("INFY", "IT")))
+
+    def test_postgres_wrapper_executemany_is_a_noop_on_empty_rows(self) -> None:
+        fake = FakePostgresConnection()
+        connection = db.PostgresConnection(fake)
+
+        connection.executemany("INSERT INTO stocks(symbol) VALUES (?)", [])
+
+        self.assertEqual(fake.executed, [])
 
 
 def write_hits(path: Path, tickers: list[str], sheet: str | None = None) -> None:
