@@ -62,6 +62,43 @@ class AlreadySucceededTests(unittest.TestCase):
         self.assertFalse(runner.already_succeeded_today({}, date(2026, 8, 27)))
 
 
+class JobStateHelpersTests(unittest.TestCase):
+    def test_job_results_for_today_returns_empty_for_other_dates(self) -> None:
+        state = {
+            "date": "2026-08-26",
+            "jobs": [{"name": "bullish", "ok": True}],
+        }
+        self.assertEqual(runner.job_results_for_today(state, date(2026, 8, 27)), {})
+
+    def test_job_results_for_today_indexes_jobs_by_name(self) -> None:
+        state = {
+            "date": "2026-08-27",
+            "jobs": [
+                {"name": "bullish", "ok": True},
+                {"name": "bearish", "ok": False},
+            ],
+        }
+        results = runner.job_results_for_today(state, date(2026, 8, 27))
+        self.assertEqual(set(results), {"bullish", "bearish"})
+        self.assertTrue(runner.job_already_succeeded_today(results["bullish"]))
+        self.assertFalse(runner.job_already_succeeded_today(results["bearish"]))
+
+    def test_job_result_from_state_rebuilds_job_result(self) -> None:
+        rebuilt = runner.job_result_from_state(
+            {
+                "name": "bullish",
+                "returncode": 0,
+                "duration_seconds": 1.5,
+                "skipped": False,
+                "message": "ok",
+                "ok": True,
+            }
+        )
+        self.assertEqual(rebuilt.name, "bullish")
+        self.assertTrue(rebuilt.ok)
+        self.assertEqual(rebuilt.duration_seconds, 1.5)
+
+
 class JobSpecTests(unittest.TestCase):
     def test_job_spec_parses_enabled_args_and_timeout(self) -> None:
         job = runner.JobSpec.from_dict(
@@ -185,6 +222,64 @@ class DailyOnceRunnerTests(unittest.TestCase):
         retry = succeeding.run()
         self.assertEqual(retry.status, runner.STATUS_SUCCESS)
         self.assertEqual(self.executed, ["bullish", "bullish"])
+
+    def test_partial_failure_retries_only_failed_jobs(self) -> None:
+        jobs = [
+            runner.JobSpec("bullish", "bullishbiasnifty500.py"),
+            runner.JobSpec("bearish", "bearisbiasnifty500.py"),
+        ]
+
+        def fail_bearish(job: runner.JobSpec) -> runner.JobResult:
+            self.executed.append(job.name)
+            if job.name == "bearish":
+                return runner.JobResult(
+                    name=job.name,
+                    returncode=1,
+                    duration_seconds=1.0,
+                    message="boom",
+                )
+            return runner.JobResult(name=job.name, returncode=0, duration_seconds=1.0, message="ok")
+
+        first = self._make_runner(jobs, executor=fail_bearish).run()
+        self.assertEqual(first.status, runner.STATUS_FAILED)
+        self.assertEqual(self.executed, ["bullish", "bearish"])
+
+        self.executed.clear()
+        retry = self._make_runner(jobs, executor=self._succeed).run()
+        self.assertEqual(retry.status, runner.STATUS_SUCCESS)
+        self.assertEqual(self.executed, ["bearish"])
+
+        state = runner.load_state(self.state_path)
+        self.assertEqual(state["status"], runner.STATUS_SUCCESS)
+        self.assertEqual([job["name"] for job in state["jobs"]], ["bullish", "bearish"])
+        self.assertTrue(all(job["ok"] for job in state["jobs"]))
+
+    def test_not_yet_run_jobs_execute_on_retry_after_partial_state(self) -> None:
+        jobs = [
+            runner.JobSpec("bullish", "bullishbiasnifty500.py"),
+            runner.JobSpec("bearish", "bearisbiasnifty500.py"),
+            runner.JobSpec("merge", "merge_ticker_candidates.py"),
+        ]
+        runner.write_state(
+            self.state_path,
+            runner.RunReport(
+                status=runner.STATUS_FAILED,
+                run_date=self.today,
+                jobs=[
+                    runner.JobResult(
+                        name="bullish",
+                        returncode=0,
+                        duration_seconds=1.0,
+                        message="ok",
+                    ),
+                ],
+                message="Interrupted before later jobs could run.",
+            ),
+        )
+
+        retry = self._make_runner(jobs, executor=self._succeed).run()
+        self.assertEqual(retry.status, runner.STATUS_SUCCESS)
+        self.assertEqual(self.executed, ["bearish", "merge"])
 
     def test_next_calendar_day_runs_again(self) -> None:
         jobs = [runner.JobSpec("bullish", "bullishbiasnifty500.py")]
