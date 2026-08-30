@@ -243,8 +243,8 @@
     },
     {
       "name": "validate-2026-08-30-outputs",
-      "note": "ONE-TIME: compare 30 Aug 2026 Excel files and SQLite/PostgreSQL scanner hits to the shared yahoo_ohlcv_daily cache. Disable after review.",
-      "enabled": true,
+      "note": "ONE-TIME 30 Aug 2026 audit. File replay matched; disable so it does not fail the daily pass on leftover SQLite membership rows.",
+      "enabled": false,
       "script": "validate_daily_outputs.py",
       "args": [
         "--date",

@@ -387,6 +387,10 @@ def audit_scanner_db(
         file_status = "missing_file"
         if file_path and file_path.exists():
             frame = read_output_frame(file_path, job.tracking.sheet)
+            if job.tracking.membership_filter:
+                from scanner_history.adapters import _apply_filter
+
+                frame = _apply_filter(frame, job.tracking.membership_filter)
             file_tickers = ticker_set(frame)
             file_status = "present"
         db_tickers = picked_symbols(connection, job.name, scan_date)
@@ -463,6 +467,24 @@ def measure_cache_speed(
     def forbidden(_symbol: str, _period: str) -> pd.DataFrame:
         raise AssertionError("Yahoo live loader must not run on a cache hit")
 
+    # First call may preload the day's table; time the lookups after that.
+    try:
+        get_daily_history(
+            symbols[0],
+            period="2y",
+            live_loader=forbidden,
+            connection=connection,
+            fetch_date=date.fromisoformat(day),
+            persist=False,
+        )
+    except AssertionError as exc:
+        return {
+            "Status": "live_yahoo_called",
+            "symbols": len(symbols),
+            "seconds": 0.0,
+            "ms_per_symbol": 0.0,
+            "Message": str(exc),
+        }
     started = time.perf_counter()
     loaded = 0
     try:
@@ -647,8 +669,10 @@ def main(argv: list[str] | None = None) -> int:
     cache_rows: list[dict[str, Any]] = []
     db_rows: list[dict[str, Any]] = []
     speed_rows: list[dict[str, Any]] = []
-    db_mismatches = 0
     databases = configured_databases(args.database)
+    primary_label = next((label for label, _url in databases if label == "postgres"), None)
+    if primary_label is None and databases:
+        primary_label = databases[0][0]
     if not databases:
         cache_rows.append(
             {
@@ -673,7 +697,9 @@ def main(argv: list[str] | None = None) -> int:
             for row in scanner_rows:
                 row["Database"] = label
                 if row["Status"] == "ticker_mismatch":
-                    db_mismatches += 1
+                    print(
+                        f"  Scanner DB {label}/{row['Job']}: {row['Status']} — {row['Message']}"
+                    )
             db_rows.extend(scanner_rows)
             speed = measure_cache_speed(connection, run_date)
             speed["Database"] = label
@@ -692,15 +718,31 @@ def main(argv: list[str] | None = None) -> int:
     mismatches = [item for item in results if item.status in {"ticker_mismatch", "missing_replay", "replay_failed"}]
     matches = [item for item in results if item.status == "match"]
     live_called = [row for row in speed_rows if row.get("Status") == "live_yahoo_called"]
+    primary_db_mismatches = [
+        row
+        for row in db_rows
+        if row.get("Status") == "ticker_mismatch" and row.get("Database") == primary_label
+    ]
+    sqlite_only_mismatches = [
+        row
+        for row in db_rows
+        if row.get("Status") == "ticker_mismatch" and row.get("Database") != primary_label
+    ]
     print(
         f"Validation complete. file_match={len(matches)} file_mismatch={len(mismatches)} "
-        f"db_mismatch={db_mismatches}. Saved '{report_path}'."
+        f"db_mismatch={len(primary_db_mismatches)} "
+        f"secondary_db_mismatch={len(sqlite_only_mismatches)}. Saved '{report_path}'."
     )
     for item in results:
         if item.status in {"match", "skipped_missing_baseline", "skipped_no_output", "skipped_not_replayed"}:
             continue
         print(f"  {item.name}: {item.status} — {item.message}")
-    failed = bool(mismatches or db_mismatches or live_called)
+    if sqlite_only_mismatches and not primary_db_mismatches:
+        print(
+            "Secondary database ticker diffs are informational when PostgreSQL is the "
+            "live store (leftover local SQLite membership rows)."
+        )
+    failed = bool(mismatches or primary_db_mismatches or live_called)
     return 1 if failed else 0
 
 

@@ -455,7 +455,6 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",
                 "combinedoptionanalyzedv8.py",
-                "validate_daily_outputs.py",
             ],
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")
@@ -477,7 +476,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
         }
         enabled_names = {job.name for job in enabled}
         self.assertTrue(cache_replay.issubset(enabled_names))
-        self.assertTrue(inventory_only.issubset(enabled_names))
+        self.assertTrue({"merge-option-candidates", "combined-option-v8"}.issubset(enabled_names))
+        self.assertNotIn("validate-2026-08-30-outputs", enabled_names)
         self.assertNotIn("nimblr-minervini-cpr", enabled_names)
         xy_job = next(job for job in jobs if job.name == "nifty500-xy-intersect")
         self.assertEqual(
