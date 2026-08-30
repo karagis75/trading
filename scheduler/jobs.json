@@ -242,7 +242,7 @@
     },
     {
       "name": "validate-2026-08-30-outputs",
-      "note": "ONE-TIME: compare the existing 30 Aug 2026 output files to a cache-backed replay. Disable this job after you review outputs/2026-08-30/Yahoo_Cache_Validation.xlsx.",
+      "note": "ONE-TIME: compare 30 Aug 2026 Excel files and SQLite/PostgreSQL scanner hits to the shared yahoo_ohlcv_daily cache. Disable after review.",
       "enabled": true,
       "script": "validate_daily_outputs.py",
       "args": [

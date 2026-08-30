@@ -9,6 +9,9 @@ import pandas as pd
 
 import daily_once_runner as runner
 import validate_daily_outputs as validate
+import yahoo_bar_store as store
+from scanner_history.db import connect
+from scanner_history.tracker import MembershipTracker, TrackingConfig
 
 
 def write_xlsx(path: Path, tickers: list[str], **columns: list) -> None:
@@ -181,6 +184,110 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(job.script, "validate_daily_outputs.py")
         self.assertIn("2026-08-30", job.args)
         self.assertTrue((runner.REPO_ROOT / job.script).exists())
+
+
+class DatabaseAuditTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.db = self.root / "history.sqlite3"
+        self.universe = self.root / "universe.csv"
+        pd.DataFrame(
+            {
+                "Company Name": ["TCS Ltd", "INFY Ltd", "ABB Ltd"],
+                "Industry": ["IT", "IT", "Cap Goods"],
+                "Ticker": ["TCS", "INFY", "ABB"],
+                "Series": ["EQ", "EQ", "EQ"],
+                "ISIN Code": ["INE1", "INE2", "INE3"],
+            }
+        ).to_csv(self.universe, index=False)
+        self.conn = connect(self.db)
+
+    def tearDown(self) -> None:
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_yahoo_cache_reports_fetch_once_shared_table(self) -> None:
+        index = pd.bdate_range(end="2026-08-28", periods=20)
+        history = pd.DataFrame(
+            {"Open": 10.0, "High": 11.0, "Low": 9.0, "Close": 10.5, "Volume": 100.0},
+            index=index,
+        )
+        store.prefetch_symbols(
+            ["TCS", "INFY", "ABB"],
+            period="1mo",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        audit = validate.audit_yahoo_cache(self.conn, date(2026, 8, 30))
+        self.assertEqual(audit["Status"], "fetch_once_shared_table")
+        self.assertEqual(audit["success"], 3)
+        self.assertEqual(audit["symbols"], 3)
+        speed = validate.measure_cache_speed(self.conn, date(2026, 8, 30))
+        self.assertEqual(speed["Status"], "fast")
+        self.assertGreater(speed["symbols"], 0)
+        self.assertIn("live Yahoo not called", speed["Message"])
+
+    def test_scanner_db_matches_existing_output_file(self) -> None:
+        baseline = self.root / "outputs" / "2026-08-30"
+        hits = baseline / "Bullish_Bias_Analysis.xlsx"
+        write_xlsx(hits, ["TCS", "INFY"], **{"Status": ["Confirmed Bullish", "Confirmed Bullish"]})
+        tracker = MembershipTracker(self.conn, self.universe)
+        tracker.ingest_output(
+            scanner_id="bullish-bias-nifty500",
+            tracking=TrackingConfig(
+                enabled=True,
+                role="primary_scanner",
+                format="xlsx",
+                symbol_column="Ticker",
+                classification_column="Status",
+            ),
+            scan_date=date(2026, 8, 30),
+            output_path=hits,
+            job_ok=True,
+        )
+        jobs = runner.load_jobs(sample_jobs(self.root))
+        rows = validate.audit_scanner_db(self.conn, jobs, date(2026, 8, 30), baseline)
+        by_name = {row["Job"]: row for row in rows}
+        self.assertEqual(by_name["bullish-bias-nifty500"]["Status"], "match")
+        self.assertEqual(by_name["bullish-bias-nifty500"]["File tickers"], 2)
+        self.assertEqual(by_name["bullish-bias-nifty500"]["DB tickers"], 2)
+        self.assertEqual(by_name["minervini-volume-cpr"]["Status"], "no_db_or_file")
+
+    def test_main_audits_sqlite_when_no_output_folder(self) -> None:
+        index = pd.bdate_range(end="2026-08-28", periods=12)
+        history = pd.DataFrame(
+            {"Open": 10.0, "High": 11.0, "Low": 9.0, "Close": 10.5, "Volume": 100.0},
+            index=index,
+        )
+        store.prefetch_symbols(
+            ["TCS"],
+            period="1mo",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda *_args: history,
+        )
+        report = self.root / "Yahoo_Cache_Validation.xlsx"
+        code = validate.main(
+            [
+                "--date",
+                "2026-08-30",
+                "--jobs",
+                str(sample_jobs(self.root)),
+                "--baseline",
+                str(self.root / "missing-outputs"),
+                "--output",
+                str(report),
+                "--database",
+                str(self.db),
+            ]
+        )
+        self.assertEqual(code, 0)
+        cache = pd.read_excel(report, sheet_name="Yahoo cache")
+        self.assertIn("fetch_once_shared_table", set(cache["Status"]))
+        speed = pd.read_excel(report, sheet_name="Cache speed")
+        self.assertIn("fast", set(speed["Status"]))
 
 
 if __name__ == "__main__":

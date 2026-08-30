@@ -1,9 +1,13 @@
-"""One-time validation: compare existing dated outputs to a cache-backed replay.
+"""One-time validation of the 30 Aug 2026 run against the shared Yahoo cache.
 
-Uses whatever files are already under ``outputs/YYYY-MM-DD`` (for example the
-30 Aug 2026 morning run) as the baseline. Jobs that produced a file can be
-replayed with the shared Yahoo bar cache into a sibling folder, then ticker
-sets are compared. Jobs with no baseline file are skipped.
+Checks, in order:
+
+1. Whatever Excel/CSV files already exist under ``outputs/YYYY-MM-DD``.
+2. Each scanner's ingested hits in SQLite and/or PostgreSQL
+   (``scan_runs`` / ``stock_scanner_daily``).
+3. The new fetch-once design: ``yahoo_ohlcv_prefetch`` + ``yahoo_ohlcv_daily``
+   in the same database, reused by later scanners without calling Yahoo.
+4. Cache-hit latency so later scanners stay fast.
 
 Disable the ``validate-2026-08-30-outputs`` schedule entry after you review
 ``outputs/2026-08-30/Yahoo_Cache_Validation.xlsx``.
@@ -12,8 +16,10 @@ Disable the ``validate-2026-08-30-outputs`` schedule entry after you review
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -22,6 +28,9 @@ from typing import Any, Callable
 import pandas as pd
 
 import daily_once_runner as runner
+from scanner_history import db as history_db
+from scanner_history import queries
+from yahoo_bar_store import DEFAULT_DB, get_daily_history
 
 REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_JOBS = REPO_ROOT / "scheduler" / "jobs.json"
@@ -248,7 +257,256 @@ def compare_existing(
     return compared
 
 
-def write_report(results: list[JobCompare], output_path: Path) -> Path:
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
+def configured_databases(extra: list[str] | None = None) -> list[tuple[str, str]]:
+    """Return (label, url) pairs for local SQLite and configured PostgreSQL."""
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(label: str, url: str) -> None:
+        if url and url not in seen:
+            seen.add(url)
+            found.append((label, url))
+
+    sqlite_default = REPO_ROOT / "scanner_history" / "scanner_history.sqlite3"
+    if sqlite_default.exists():
+        add("sqlite", str(sqlite_default))
+    env_url = os.environ.get("TRADING_DATABASE_URL") or os.environ.get("TRADING_YAHOO_CACHE_DB")
+    if env_url:
+        label = "postgres" if env_url.startswith("postgres") else "configured"
+        add(label, env_url)
+    if DEFAULT_DB and DEFAULT_DB not in seen and Path(str(DEFAULT_DB)).exists():
+        add("sqlite", str(DEFAULT_DB))
+    for item in extra or []:
+        label = "postgres" if str(item).startswith("postgres") else "sqlite"
+        add(label, item)
+    return found
+
+
+def picked_symbols(connection: Any, scanner_id: str, scan_date: date | str) -> list[str]:
+    run = queries.scanner_day_run(connection, scanner_id, scan_date)
+    if not run or not run.get("run_id"):
+        return []
+    rows = connection.execute(
+        """
+        SELECT symbol FROM stock_scanner_daily
+        WHERE run_id = ? AND scanner_id = ? AND picked = 1
+        ORDER BY symbol
+        """,
+        (run["run_id"], scanner_id),
+    ).fetchall()
+    return [normalize_ticker(_row_get(row, "symbol")) for row in rows if normalize_ticker(_row_get(row, "symbol"))]
+
+
+def audit_yahoo_cache(connection: Any, fetch_date: date | str) -> dict[str, Any]:
+    """Confirm one shared Yahoo fetch landed in yahoo_ohlcv_* tables."""
+    day = fetch_date if isinstance(fetch_date, str) else fetch_date.isoformat()
+    try:
+        prefetch = connection.execute(
+            """
+            SELECT status, COUNT(*) AS n
+            FROM yahoo_ohlcv_prefetch
+            WHERE fetch_date = ?
+            GROUP BY status
+            """,
+            (day,),
+        ).fetchall()
+        bars = connection.execute(
+            "SELECT COUNT(*) AS n, COUNT(DISTINCT symbol) AS symbols FROM yahoo_ohlcv_daily"
+        ).fetchone()
+        latest = connection.execute(
+            "SELECT MAX(bar_date) AS last_bar, MIN(bar_date) AS first_bar FROM yahoo_ohlcv_daily"
+        ).fetchone()
+    except Exception as exc:
+        return {
+            "Status": "cache_error",
+            "Message": str(exc),
+            "success": 0,
+            "empty": 0,
+            "error": 0,
+            "bar_rows": 0,
+            "symbols": 0,
+        }
+    counts = {str(_row_get(row, "status")): int(_row_get(row, "n") or 0) for row in prefetch}
+    success = counts.get("success", 0)
+    symbols = int(_row_get(bars, "symbols") or 0)
+    bar_rows = int(_row_get(bars, "n") or 0)
+    if success and symbols:
+        status = "fetch_once_shared_table"
+        message = (
+            f"{success} symbol(s) prefetched on {day}; "
+            f"{bar_rows} daily bars for {symbols} symbol(s) in yahoo_ohlcv_daily."
+        )
+    elif bar_rows:
+        status = "bars_without_prefetch_row"
+        message = f"{bar_rows} bars present but yahoo_ohlcv_prefetch has no success row for {day}."
+    else:
+        status = "pending_prefetch"
+        message = (
+            f"No Yahoo bars stored yet for {day}. "
+            "Run prefetch-yahoo-ohlcv so later scanners can read the table."
+        )
+    return {
+        "Status": status,
+        "Message": message,
+        "success": success,
+        "empty": counts.get("empty", 0),
+        "error": counts.get("error", 0),
+        "bar_rows": bar_rows,
+        "symbols": symbols,
+        "first_bar": _row_get(latest, "first_bar"),
+        "last_bar": _row_get(latest, "last_bar"),
+    }
+
+
+def audit_scanner_db(
+    connection: Any,
+    jobs: list[runner.JobSpec],
+    scan_date: date,
+    baseline_dir: Path,
+) -> list[dict[str, Any]]:
+    """Compare each scanner's DB hits to the existing dated output file."""
+    rows: list[dict[str, Any]] = []
+    day_rows = {item["scanner_id"]: item for item in queries.day_statuses(connection, scan_date)}
+    for job in jobs:
+        if not job.tracking.enabled:
+            continue
+        filename = output_filename(job, scan_date)
+        file_path = baseline_dir / filename if filename else None
+        file_tickers: list[str] = []
+        file_status = "missing_file"
+        if file_path and file_path.exists():
+            frame = read_output_frame(file_path, job.tracking.sheet)
+            file_tickers = ticker_set(frame)
+            file_status = "present"
+        db_tickers = picked_symbols(connection, job.name, scan_date)
+        run = day_rows.get(job.name) or {}
+        only_file = sorted(set(file_tickers) - set(db_tickers))
+        only_db = sorted(set(db_tickers) - set(file_tickers))
+        if file_status == "missing_file" and not db_tickers and not run:
+            status = "no_db_or_file"
+            message = "No ingested run and no output file."
+        elif file_status == "missing_file":
+            status = "db_only"
+            message = f"DB has {len(db_tickers)} hit(s); output file not on disk."
+        elif not run:
+            status = "file_only"
+            message = f"File has {len(file_tickers)} ticker(s); no scan_runs row."
+        elif set(file_tickers) == set(db_tickers):
+            status = "match"
+            message = f"{len(file_tickers)} ticker(s) match in file and DB."
+        else:
+            status = "ticker_mismatch"
+            message = (
+                f"{len(only_file)} only in file, {len(only_db)} only in DB "
+                f"(file={len(file_tickers)} db={len(db_tickers)})."
+            )
+        rows.append(
+            {
+                "Job": job.name,
+                "DB status": run.get("status"),
+                "DB hits": run.get("result_count"),
+                "File": filename or "",
+                "File tickers": len(file_tickers),
+                "DB tickers": len(db_tickers),
+                "Shared": len(set(file_tickers) & set(db_tickers)),
+                "Only file": len(only_file),
+                "Only DB": len(only_db),
+                "Status": status,
+                "Message": message,
+            }
+        )
+    return rows
+
+
+def measure_cache_speed(
+    connection: Any,
+    fetch_date: date | str,
+    *,
+    limit: int = 25,
+) -> dict[str, Any]:
+    """Time cache-only reads. Live Yahoo must not be called."""
+    day = fetch_date if isinstance(fetch_date, str) else fetch_date.isoformat()
+    try:
+        rows = connection.execute(
+            """
+            SELECT symbol FROM yahoo_ohlcv_prefetch
+            WHERE fetch_date = ? AND status = 'success'
+            ORDER BY symbol
+            LIMIT ?
+            """,
+            (day, limit),
+        ).fetchall()
+    except Exception as exc:
+        return {"Status": "cache_error", "symbols": 0, "seconds": 0.0, "ms_per_symbol": 0.0, "Message": str(exc)}
+    symbols = [normalize_ticker(_row_get(row, "symbol")) for row in rows]
+    symbols = [symbol for symbol in symbols if symbol]
+    if not symbols:
+        return {
+            "Status": "pending_prefetch",
+            "symbols": 0,
+            "seconds": 0.0,
+            "ms_per_symbol": 0.0,
+            "Message": "No prefetched symbols to time.",
+        }
+
+    def forbidden(_symbol: str, _period: str) -> pd.DataFrame:
+        raise AssertionError("Yahoo live loader must not run on a cache hit")
+
+    started = time.perf_counter()
+    loaded = 0
+    try:
+        for symbol in symbols:
+            frame = get_daily_history(
+                symbol,
+                period="2y",
+                live_loader=forbidden,
+                connection=connection,
+                fetch_date=date.fromisoformat(day),
+                persist=False,
+            )
+            if frame is not None and not frame.empty:
+                loaded += 1
+    except AssertionError as exc:
+        return {
+            "Status": "live_yahoo_called",
+            "symbols": len(symbols),
+            "seconds": time.perf_counter() - started,
+            "ms_per_symbol": 0.0,
+            "Message": str(exc),
+        }
+    elapsed = time.perf_counter() - started
+    per_ms = (elapsed / len(symbols)) * 1000.0
+    # Live Yahoo is typically hundreds of ms to several seconds per name.
+    # A local table read should stay well under two seconds even when cold.
+    status = "fast" if per_ms <= 2000.0 else "slow"
+    return {
+        "Status": status,
+        "symbols": loaded,
+        "seconds": elapsed,
+        "ms_per_symbol": per_ms,
+        "Message": f"{loaded} cache read(s) in {elapsed:.3f}s ({per_ms:.1f} ms/symbol); live Yahoo not called.",
+    }
+
+
+def write_report(
+    results: list[JobCompare],
+    output_path: Path,
+    *,
+    cache_rows: list[dict[str, Any]] | None = None,
+    db_rows: list[dict[str, Any]] | None = None,
+    speed_rows: list[dict[str, Any]] | None = None,
+) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     summary = pd.DataFrame(
         [
@@ -276,6 +534,9 @@ def write_report(results: list[JobCompare], output_path: Path) -> Path:
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         summary.to_excel(writer, sheet_name="Summary", index=False)
         details.to_excel(writer, sheet_name="Ticker diffs", index=False)
+        pd.DataFrame(cache_rows or []).to_excel(writer, sheet_name="Yahoo cache", index=False)
+        pd.DataFrame(db_rows or []).to_excel(writer, sheet_name="Scanner DB", index=False)
+        pd.DataFrame(speed_rows or []).to_excel(writer, sheet_name="Cache speed", index=False)
     return output_path
 
 
@@ -317,6 +578,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=",".join(sorted(DEFAULT_SKIP_REPLAY)),
         help="Comma-separated job names that should not be re-executed.",
     )
+    parser.add_argument(
+        "--database",
+        action="append",
+        default=[],
+        help="Extra SQLite path or PostgreSQL URL to audit (repeatable).",
+    )
     return parser.parse_args(argv)
 
 
@@ -339,59 +606,102 @@ def main(argv: list[str] | None = None) -> int:
     results = discover_jobs(jobs, run_date, baseline_dir, replay_dir)
 
     available = [item for item in results if item.status == "pending"]
-    if not baseline_dir.exists() or not available:
-        print(
-            f"No existing scanner outputs found under {baseline_dir}. "
-            "Nothing to validate; skipping."
-        )
-        write_report(results, report_path)
-        print(f"Wrote inventory to '{report_path}'.")
-        return 0
-
-    print(f"Found {len(available)} existing output file(s) under {baseline_dir}.")
-    refreshed: list[JobCompare] = []
-    for item in results:
-        job = next(job for job in jobs if job.name == item.name)
-        if item.status != "pending":
-            print(f"  {item.name}: {item.status} — {item.message}")
-            refreshed.append(item)
-            continue
-        should_replay = args.replay and item.name not in skip_replay
-        if should_replay:
-            print(f"  {item.name}: replaying with cache into {replay_dir}...")
-            completed = run_replay(job, run_date, replay_dir, REPO_ROOT)
-            if completed.returncode != 0:
-                item.status = "replay_failed"
-                item.message = (completed.stderr or completed.stdout or "replay failed").strip()[:500]
-                print(f"  {item.name}: replay_failed")
+    if available:
+        print(f"Found {len(available)} existing output file(s) under {baseline_dir}.")
+        refreshed: list[JobCompare] = []
+        for item in results:
+            job = next(job for job in jobs if job.name == item.name)
+            if item.status != "pending":
+                print(f"  {item.name}: {item.status} — {item.message}")
                 refreshed.append(item)
                 continue
-        elif item.replay_path is None or not item.replay_path.exists():
-            item.status = "skipped_not_replayed"
-            item.message = (
-                "Baseline kept; this job was not replayed "
-                "(not a Yahoo-cache scanner, or --replay was off)."
-            )
-            print(f"  {item.name}: {item.status} — {item.message}")
-            refreshed.append(item)
-            continue
-        compared = compare_existing(item, job.tracking.sheet)
-        print(f"  {compared.name}: {compared.status} — {compared.message}")
-        refreshed.append(compared)
-    results = refreshed
+            should_replay = args.replay and item.name not in skip_replay
+            if should_replay:
+                print(f"  {item.name}: replaying with cache into {replay_dir}...")
+                completed = run_replay(job, run_date, replay_dir, REPO_ROOT)
+                if completed.returncode != 0:
+                    item.status = "replay_failed"
+                    item.message = (completed.stderr or completed.stdout or "replay failed").strip()[:500]
+                    print(f"  {item.name}: replay_failed")
+                    refreshed.append(item)
+                    continue
+            elif item.replay_path is None or not item.replay_path.exists():
+                item.status = "skipped_not_replayed"
+                item.message = (
+                    "Baseline kept; this job was not replayed "
+                    "(not a Yahoo-cache scanner, or --replay was off)."
+                )
+                print(f"  {item.name}: {item.status} — {item.message}")
+                refreshed.append(item)
+                continue
+            compared = compare_existing(item, job.tracking.sheet)
+            print(f"  {compared.name}: {compared.status} — {compared.message}")
+            refreshed.append(compared)
+        results = refreshed
+    else:
+        print(
+            f"No existing scanner outputs found under {baseline_dir}. "
+            "File replay skipped; still auditing SQLite/PostgreSQL if present."
+        )
 
-    write_report(results, report_path)
+    cache_rows: list[dict[str, Any]] = []
+    db_rows: list[dict[str, Any]] = []
+    speed_rows: list[dict[str, Any]] = []
+    db_mismatches = 0
+    databases = configured_databases(args.database)
+    if not databases:
+        cache_rows.append(
+            {
+                "Database": "",
+                "Status": "no_database",
+                "Message": "No scanner_history.sqlite3 or TRADING_DATABASE_URL found.",
+            }
+        )
+    for label, url in databases:
+        print(f"Auditing {label} database...")
+        try:
+            connection = history_db.connect(url)
+        except Exception as exc:
+            cache_rows.append({"Database": label, "Status": "connect_failed", "Message": str(exc)})
+            continue
+        try:
+            cache = audit_yahoo_cache(connection, run_date)
+            cache["Database"] = label
+            cache_rows.append(cache)
+            print(f"  Yahoo cache: {cache['Status']} — {cache['Message']}")
+            scanner_rows = audit_scanner_db(connection, jobs, run_date, baseline_dir)
+            for row in scanner_rows:
+                row["Database"] = label
+                if row["Status"] == "ticker_mismatch":
+                    db_mismatches += 1
+            db_rows.extend(scanner_rows)
+            speed = measure_cache_speed(connection, run_date)
+            speed["Database"] = label
+            speed_rows.append(speed)
+            print(f"  Cache speed: {speed['Status']} — {speed['Message']}")
+        finally:
+            connection.close()
+
+    write_report(
+        results,
+        report_path,
+        cache_rows=cache_rows,
+        db_rows=db_rows,
+        speed_rows=speed_rows,
+    )
     mismatches = [item for item in results if item.status in {"ticker_mismatch", "missing_replay", "replay_failed"}]
     matches = [item for item in results if item.status == "match"]
+    live_called = [row for row in speed_rows if row.get("Status") == "live_yahoo_called"]
     print(
-        f"Validation complete. match={len(matches)} mismatch={len(mismatches)}. "
-        f"Saved '{report_path}'."
+        f"Validation complete. file_match={len(matches)} file_mismatch={len(mismatches)} "
+        f"db_mismatch={db_mismatches}. Saved '{report_path}'."
     )
     for item in results:
-        if item.status in {"match", "skipped_missing_baseline", "skipped_no_output"}:
+        if item.status in {"match", "skipped_missing_baseline", "skipped_no_output", "skipped_not_replayed"}:
             continue
         print(f"  {item.name}: {item.status} — {item.message}")
-    return 1 if mismatches else 0
+    failed = bool(mismatches or db_mismatches or live_called)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
