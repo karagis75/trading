@@ -2,7 +2,7 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -518,6 +518,124 @@ class AnalyzeAndCliTests(unittest.TestCase):
         self.assertEqual(args.input, "ind_nifty500list.csv")
         self.assertEqual(args.mode, "scan")
         self.assertEqual(args.combine_mode, "all")
+
+
+class YahooFetchRecoveryTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        scanner.reset_yahoo_http_session()
+
+    def test_lookback_seconds_parses_yahoo_period_tokens(self) -> None:
+        self.assertEqual(scanner.lookback_seconds("2y"), 2 * 365 * 86400)
+        self.assertEqual(scanner.lookback_seconds("3mo"), 3 * 30 * 86400)
+        self.assertEqual(scanner.lookback_seconds("5d"), 5 * 86400)
+        with self.assertRaises(ValueError):
+            scanner.lookback_seconds("max")
+
+    def test_config_rejects_invalid_retry_settings(self) -> None:
+        with self.assertRaises(ValueError):
+            scanner.CombinedScannerConfig(max_retries=0)
+        with self.assertRaises(ValueError):
+            scanner.CombinedScannerConfig(retry_delay=-0.1)
+        with self.assertRaises(ValueError):
+            scanner.CombinedScannerConfig(request_delay=-1)
+
+    def test_frame_from_yahoo_chart_uses_adjclose_when_present(self) -> None:
+        payload = {
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [1_700_000_000, 1_700_086_400],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [100.0, 110.0],
+                                    "high": [105.0, 120.0],
+                                    "low": [99.0, 108.0],
+                                    "close": [102.0, 118.0],
+                                    "volume": [1_000, 2_000],
+                                }
+                            ],
+                            "adjclose": [{"adjclose": [101.0, 117.0]}],
+                        },
+                    }
+                ]
+            }
+        }
+        frame = scanner.frame_from_yahoo_chart(payload)
+        self.assertEqual(len(frame), 2)
+        self.assertAlmostEqual(float(frame["Close"].iloc[-1]), 117.0)
+        self.assertAlmostEqual(float(frame["Volume"].iloc[-1]), 2000.0)
+
+    def test_fetch_history_retries_empty_yfinance_then_succeeds(self) -> None:
+        history = uptrend_ohlcv(5)
+        config = short_config(max_retries=3, retry_delay=0.0)
+        with patch.object(
+            scanner,
+            "_download_yahoo_history",
+            side_effect=[pd.DataFrame(), history],
+        ) as download:
+            result = scanner.fetch_history("360ONE", config)
+        self.assertEqual(len(result), len(history))
+        self.assertEqual(download.call_count, 2)
+
+    def test_fetch_history_falls_back_to_chart_when_yfinance_is_empty(self) -> None:
+        history = uptrend_ohlcv(4)
+        config = short_config(max_retries=1, retry_delay=0.0)
+        with patch.object(scanner, "_ticker_history", return_value=pd.DataFrame()):
+            with patch.object(scanner, "_yf_download_history", return_value=pd.DataFrame()):
+                with patch.object(scanner, "history_from_chart", return_value=history) as chart:
+                    result = scanner.fetch_history("ABB", config)
+        self.assertEqual(list(result["Close"]), list(history["Close"]))
+        chart.assert_called_once()
+        self.assertEqual(chart.call_args.args[0], "ABB")
+
+    def test_fetch_history_returns_empty_after_retries_exhausted(self) -> None:
+        config = short_config(max_retries=2, retry_delay=0.0)
+        with patch.object(scanner, "_download_yahoo_history", return_value=pd.DataFrame()) as download:
+            result = scanner.fetch_history("3MINDIA", config)
+        self.assertTrue(result.empty)
+        self.assertEqual(download.call_count, 2)
+
+    def test_yahoo_http_session_is_reused(self) -> None:
+        first = scanner.yahoo_http_session()
+        second = scanner.yahoo_http_session()
+        self.assertIs(first, second)
+
+    def test_history_from_chart_hits_query1_then_query2(self) -> None:
+        payload = {"chart": {"result": [{"timestamp": [], "indicators": {"quote": [{}]}}]}}
+        session = Mock()
+        first = Mock()
+        first.raise_for_status.return_value = None
+        first.json.return_value = payload
+        second = Mock()
+        second.raise_for_status.return_value = None
+        second.json.return_value = {
+            "chart": {
+                "result": [
+                    {
+                        "timestamp": [1_700_000_000],
+                        "indicators": {
+                            "quote": [
+                                {
+                                    "open": [10.0],
+                                    "high": [11.0],
+                                    "low": [9.0],
+                                    "close": [10.5],
+                                    "volume": [100],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        }
+        session.get.side_effect = [first, second]
+        frame = scanner.history_from_chart("TCS", "5d", session=session)
+        self.assertEqual(len(frame), 1)
+        self.assertEqual(session.get.call_count, 2)
+        self.assertIn("query1.finance.yahoo.com", session.get.call_args_list[0].args[0])
+        self.assertIn("query2.finance.yahoo.com", session.get.call_args_list[1].args[0])
+        self.assertAlmostEqual(float(frame["Close"].iloc[0]), 10.5)
 
 
 if __name__ == "__main__":

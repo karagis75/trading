@@ -18,6 +18,14 @@ DEFAULT_UNIVERSE = REPO_ROOT / "ind_nifty500list.csv"
 
 # Friendly titles and preferred column order for each scanner day table.
 SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
+    "prefetch-yahoo-ohlcv": {
+        "title": "Yahoo OHLCV Prefetch",
+        "columns": ["Ticker"],
+    },
+    "validate-2026-08-30-outputs": {
+        "title": "30 Aug 2026 output validation",
+        "columns": ["Job", "Status", "Shared tickers"],
+    },
     "bullish-bias-nifty500": {
         "title": "Bullish Bias NIFTY 500",
         "columns": [

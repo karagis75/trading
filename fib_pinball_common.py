@@ -282,18 +282,30 @@ def ohlcv_to_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def fetch_history(symbol: str, config: PinballConfig) -> pd.DataFrame:
-    ticker = yf.Ticker(yahoo_symbol(symbol))
-    end = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize() + pd.Timedelta(days=1)
-    start = end - pd.Timedelta(days=config.lookback_days)
-    history = ticker.history(
-        start=start.strftime("%Y-%m-%d"),
-        end=end.strftime("%Y-%m-%d"),
-        interval="1d",
-        auto_adjust=True,
+    from yahoo_bar_store import get_daily_history
+
+    def live(_symbol: str, _period: str) -> pd.DataFrame:
+        ticker = yf.Ticker(yahoo_symbol(symbol))
+        end = pd.Timestamp.now(tz="Asia/Kolkata").tz_localize(None).normalize() + pd.Timedelta(days=1)
+        start = end - pd.Timedelta(days=config.lookback_days)
+        history = ticker.history(
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
+            interval="1d",
+            auto_adjust=True,
+        )
+        if history is None or history.empty:
+            return pd.DataFrame(columns=list(OHLCV_COLUMNS))
+        return normalize_ohlcv(history)
+
+    cached = get_daily_history(
+        symbol,
+        lookback_days=config.lookback_days,
+        live_loader=live,
     )
-    if history is None or history.empty:
+    if cached is None or cached.empty:
         return pd.DataFrame(columns=list(OHLCV_COLUMNS))
-    return normalize_ohlcv(history)
+    return normalize_ohlcv(cached)
 
 
 def find_pivots(

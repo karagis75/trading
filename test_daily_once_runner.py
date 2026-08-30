@@ -444,6 +444,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
         self.assertEqual(
             [job.script for job in enabled],
             [
+                "prefetch_yahoo_ohlcv.py",
                 "bullishbiasnifty500.py",
                 "bearisbiasnifty500.py",
                 "nifty500_xy_intersect.py",
@@ -454,6 +455,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",
                 "combinedoptionanalyzedv8.py",
+                "validate_daily_outputs.py",
             ],
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")

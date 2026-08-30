@@ -271,5 +271,56 @@ class CliTests(unittest.TestCase):
         self.assertIn("TCS", tickers)
 
 
+class VolumeCprYahooFetchTests(unittest.TestCase):
+    def test_analyze_symbol_uses_volume_cpr_chart_fetch_not_yfinance(self) -> None:
+        config = short_config()
+        history = passing_ohlcv(config)
+        with patch.object(scanner, "fetch_volume_cpr_history", return_value=history) as chart_fetch:
+            with patch.object(scanner, "history_from_chart") as unused_chart:
+                result = scanner.analyze_symbol("360ONE", config)
+        chart_fetch.assert_called_once_with("360ONE", config)
+        unused_chart.assert_not_called()
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["Ticker"], "360ONE")
+
+    def test_fetch_volume_cpr_history_uses_chart_api_and_retries(self) -> None:
+        history = passing_ohlcv(short_config())
+        config = short_config(max_retries=3, retry_delay=0.0)
+        with patch.object(
+            scanner,
+            "history_from_chart",
+            side_effect=[pd.DataFrame(), history],
+        ) as chart:
+            result = scanner.fetch_volume_cpr_history("ABB", config)
+        self.assertEqual(len(result), len(history))
+        self.assertEqual(chart.call_count, 2)
+        self.assertEqual(chart.call_args.args[0], "ABB")
+
+    def test_fetch_volume_cpr_history_returns_empty_after_retries(self) -> None:
+        config = short_config(max_retries=2, retry_delay=0.0)
+        with patch.object(scanner, "history_from_chart", return_value=pd.DataFrame()) as chart:
+            result = scanner.fetch_volume_cpr_history("3MINDIA", config)
+        self.assertTrue(result.empty)
+        self.assertEqual(chart.call_count, 2)
+
+    def test_main_resets_yahoo_session_before_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "tickers.csv"
+            out = Path(tmp) / "out.xlsx"
+            pd.DataFrame({"Ticker": ["TCS"], "Company Name": ["TCS Ltd"]}).to_csv(src, index=False)
+            with patch.object(scanner, "reset_yahoo_http_session") as reset:
+                with patch.object(scanner, "analyze_symbol", return_value=None):
+                    code = scanner.main(["--input", str(src), "--output", str(out), "--engine", "csv"])
+        self.assertEqual(code, 0)
+        reset.assert_called_once()
+
+    def test_cli_accepts_lookback_and_retry_flags(self) -> None:
+        args = scanner.parse_args(["--lookback", "1y", "--max-retries", "4", "--request-delay", "0.1"])
+        self.assertEqual(args.lookback, "1y")
+        self.assertEqual(args.max_retries, 4)
+        self.assertEqual(args.request_delay, 0.1)
+
+
 if __name__ == "__main__":
     unittest.main()

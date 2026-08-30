@@ -284,41 +284,46 @@ def _download_history(ticker: str, config: IntersectScannerConfig) -> pd.DataFra
     up on a symbol.
     """
 
-    last_error: Exception | None = None
-    for attempt in range(config.max_retries):
-        try:
-            data = yf.download(
-                ticker,
-                period=config.download_period,
-                interval="1d",
-                progress=False,
-                auto_adjust=False,
-                threads=False,
-            )
-            if not data.empty:
-                return _normalise_yfinance_columns(data, ticker)
-            last_error = ValueError(f"empty price data for {ticker}")
-        except Exception as exc:
-            last_error = exc
+    from yahoo_bar_store import get_daily_history
+
+    def live(_symbol: str, period: str) -> pd.DataFrame:
+        last_error: Exception | None = None
+        for attempt in range(config.max_retries):
+            try:
+                data = yf.download(
+                    ticker,
+                    period=period,
+                    interval="1d",
+                    progress=False,
+                    auto_adjust=False,
+                    threads=False,
+                )
+                if not data.empty:
+                    return _normalise_yfinance_columns(data, ticker)
+                last_error = ValueError(f"empty price data for {ticker}")
+            except Exception as exc:
+                last_error = exc
+                logging.warning(
+                    "Download attempt %d/%d failed for %s: %s",
+                    attempt + 1,
+                    config.max_retries,
+                    ticker,
+                    exc,
+                )
+            if attempt < config.max_retries - 1:
+                backoff = config.retry_delay * (2 ** attempt)
+                time.sleep(backoff)
+
+        if last_error is not None:
             logging.warning(
-                "Download attempt %d/%d failed for %s: %s",
-                attempt + 1,
+                "All %d download attempts failed for %s: %s",
                 config.max_retries,
                 ticker,
-                exc,
+                last_error,
             )
-        if attempt < config.max_retries - 1:
-            backoff = config.retry_delay * (2 ** attempt)
-            time.sleep(backoff)
+        return pd.DataFrame()
 
-    if last_error is not None:
-        logging.warning(
-            "All %d download attempts failed for %s: %s",
-            config.max_retries,
-            ticker,
-            last_error,
-        )
-    return pd.DataFrame()
+    return get_daily_history(ticker, period=config.download_period, live_loader=live)
 
 
 def evaluate_intersect_signal(
