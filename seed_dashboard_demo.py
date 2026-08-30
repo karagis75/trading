@@ -54,6 +54,11 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             enabled=True, role="primary_scanner", format="xlsx",
             symbol_column="Ticker", classification_column="Setup Status",
         ),
+        "minervini-vcp": TrackingConfig(
+            enabled=True, role="primary_scanner", format="xlsx",
+            symbol_column="Ticker", membership_filter="Qualified=True",
+            signal_date_column="Date",
+        ),
         "nimblr-minervini-cpr": TrackingConfig(
             enabled=True, role="primary_scanner", format="xlsx",
             symbol_column="Ticker", membership_filter="Qualified=True",
@@ -112,6 +117,14 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             ["NESTLEIND", "BRITANNIA"],
             ["BRITANNIA"],
         ],
+        "minervini-vcp": [
+            ["EICHERMOT"],
+            ["EICHERMOT", "TITAN"],
+            ["TITAN"],
+            ["TITAN", "BOSCHLTD"],
+            ["BOSCHLTD"],
+            ["BOSCHLTD", "HOMEFIRST"],
+        ],
         "nimblr-minervini-cpr": [
             ["BAJFINANCE"],
             ["BAJFINANCE", "KOTAKBANK"],
@@ -163,6 +176,14 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             [{"Ticker": t, "Setup Status": "Compression", "Close Price": 800, "ADX (14)": 12, "CCI (14)": 5,
               "EMA Braid Spread %": 0.4, "Box Range %": 3.2, "Box High": 820, "Box Low": 780}
              for t in sequences["rangebound-stocks"][index]],
+        )
+        _write(
+            folder / "Minervini_VCP_Scan.xlsx",
+            [{"Ticker": t, "Date": day.isoformat(), "Close": 1200 + index * 10, "EMA50": 1150,
+              "EMA150": 1100, "EMA200": 1050, "ATR": 18, "Contractions": 3,
+              "Latest_Pullback_%": 4.2, "Base_Position": 0.88, "Stage2_Trend": True, "VCP": True,
+              "Sections_Passed": 2, "Qualified": True}
+             for t in sequences["minervini-vcp"][index]],
         )
         _write(
             folder / "Nimblr_Minervini_CPR_Scan.xlsx",
@@ -236,6 +257,7 @@ def seed(db_path: Path, universe: Path, days: int = 6) -> None:
             "bearish-bias-nifty500": folder / "Bearish_Momentum_Analysis.xlsx",
             "nifty500-xy-intersect": folder / "nifty500_xy_matrix_signals.csv",
             "rangebound-stocks": folder / "Strangle_Candidate_Analysis.xlsx",
+            "minervini-vcp": folder / "Minervini_VCP_Scan.xlsx",
             "nimblr-minervini-cpr": folder / "Nimblr_Minervini_CPR_Scan.xlsx",
             "nifty-fib-pinball-bullish": bullish_fib,
             "nifty-fib-pinball-bearish": bearish_fib,
