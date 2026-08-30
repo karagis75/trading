@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 
 DEFAULT_INPUT = "ind_nifty500list.csv"
@@ -45,6 +48,26 @@ TICKER_COLUMNS = ("Ticker", "ticker", "Symbol", "symbol", "SYMBOL")
 OLE_COMPOUND_SIGNATURE = b"\xd0\xcf\x11\xe0"
 ZIP_SIGNATURE = b"PK\x03\x04"
 OHLCV_COLUMNS = ("Open", "High", "Low", "Close", "Volume")
+YAHOO_CHART_URLS = (
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+    "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}",
+)
+YAHOO_HEADERS = {
+    "Accept": "application/json",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+}
+_LOOKBACK_SECONDS = {
+    "mo": 30 * 86400,
+    "wk": 7 * 86400,
+    "w": 7 * 86400,
+    "y": 365 * 86400,
+    "d": 86400,
+}
+_YAHOO_SESSION: Any = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +92,17 @@ class CombinedScannerConfig:
     lookback_period: str = "2y"
     combine_mode: str = "all"
     min_sections: int = 3
+    max_retries: int = 3
+    retry_delay: float = 1.0
+    request_delay: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 1:
+            raise ValueError("max_retries must be at least 1")
+        if self.retry_delay < 0 or not np.isfinite(self.retry_delay):
+            raise ValueError("retry_delay must be a finite non-negative number")
+        if self.request_delay < 0 or not np.isfinite(self.request_delay):
+            raise ValueError("request_delay must be a finite non-negative number")
 
     @property
     def effective_week52_min_periods(self) -> int:
@@ -260,6 +294,37 @@ def display_symbol(symbol: str) -> str:
     if cleaned.endswith(".NS"):
         return cleaned[:-3]
     return cleaned
+
+
+def lookback_seconds(period: str) -> int:
+    """Convert a Yahoo period token such as ``2y`` or ``3mo`` into seconds."""
+    text = str(period).strip().lower()
+    for suffix, unit in (("mo", _LOOKBACK_SECONDS["mo"]), ("wk", _LOOKBACK_SECONDS["wk"]), ("y", _LOOKBACK_SECONDS["y"]), ("w", _LOOKBACK_SECONDS["w"]), ("d", _LOOKBACK_SECONDS["d"])):
+        if text.endswith(suffix):
+            amount = text[: -len(suffix)] or "1"
+            return max(86400, int(float(amount) * unit))
+    raise ValueError(f"Unsupported Yahoo lookback period: {period}")
+
+
+def yahoo_http_session() -> Any:
+    """Reuse one browser-like session so Yahoo crumb/cookie work is not repeated."""
+    global _YAHOO_SESSION
+    if _YAHOO_SESSION is not None:
+        return _YAHOO_SESSION
+    try:
+        from curl_cffi import requests as curl_requests
+
+        session = curl_requests.Session(impersonate="chrome")
+    except Exception:
+        session = requests.Session()
+    session.headers.update(YAHOO_HEADERS)
+    _YAHOO_SESSION = session
+    return session
+
+
+def reset_yahoo_http_session() -> None:
+    global _YAHOO_SESSION
+    _YAHOO_SESSION = None
 
 
 def write_results(df: pd.DataFrame, path: str | Path, engine: str | None = None) -> None:
@@ -601,12 +666,182 @@ def evaluate_combined(
     }
 
 
-def fetch_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
-    ticker = yf.Ticker(yahoo_symbol(symbol))
+def _chart_value(values: Any, index: int) -> float | None:
+    if not values or index >= len(values):
+        return None
+    value = values[index]
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(number):
+        return None
+    return number
+
+
+def frame_from_yahoo_chart(payload: dict[str, Any] | None) -> pd.DataFrame:
+    """Turn a Yahoo v8 chart JSON payload into an OHLCV frame."""
+    result = ((payload or {}).get("chart") or {}).get("result") or []
+    if not result:
+        return pd.DataFrame()
+    chart = result[0] or {}
+    timestamps = chart.get("timestamp") or []
+    indicators = chart.get("indicators") or {}
+    quote = (indicators.get("quote") or [{}])[0] or {}
+    adj_block = (indicators.get("adjclose") or [{}])
+    adjclose = (adj_block[0] or {}).get("adjclose") if adj_block else None
+    closes = adjclose or quote.get("close") or []
+    rows: list[dict[str, float]] = []
+    index: list[pd.Timestamp] = []
+    for position, stamp in enumerate(timestamps):
+        close = _chart_value(closes, position)
+        if close is None:
+            continue
+        rows.append(
+            {
+                "Open": _chart_value(quote.get("open"), position) or close,
+                "High": _chart_value(quote.get("high"), position) or close,
+                "Low": _chart_value(quote.get("low"), position) or close,
+                "Close": close,
+                "Volume": _chart_value(quote.get("volume"), position) or 0.0,
+            }
+        )
+        index.append(pd.Timestamp(int(stamp), unit="s", tz="UTC"))
+    if not rows:
+        return pd.DataFrame()
+    return normalize_ohlcv(pd.DataFrame(rows, index=pd.DatetimeIndex(index)))
+
+
+def history_from_chart(symbol: str, period: str, session: Any | None = None) -> pd.DataFrame:
+    """Fetch daily bars from Yahoo's public chart API without a crumb cookie.
+
+    yfinance first talks to ``fc.yahoo.com`` for a cookie/crumb. When that DNS
+    lookup fails it still calls history(), then labels a listed NSE name as
+    "possibly delisted". The JS scanners in this repo already use this chart
+    endpoint directly; it works without the crumb host.
+    """
+    yahoo = yahoo_symbol(symbol)
+    encoded = quote(yahoo, safe="^")
+    end = int(time.time())
+    start = end - lookback_seconds(period)
+    params = {
+        "period1": start,
+        "period2": end,
+        "interval": "1d",
+        "events": "div,splits",
+        "includeAdjustedClose": "true",
+    }
+    http = session or yahoo_http_session()
+    last_error: Exception | None = None
+    for template in YAHOO_CHART_URLS:
+        url = template.format(symbol=encoded)
+        try:
+            response = http.get(url, params=params, timeout=20)
+            response.raise_for_status()
+            frame = frame_from_yahoo_chart(response.json())
+            if not frame.empty:
+                return frame
+            last_error = ValueError(f"empty Yahoo chart payload for {yahoo}")
+        except Exception as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return pd.DataFrame()
+
+
+def _ticker_history(symbol: str, config: CombinedScannerConfig, session: Any) -> pd.DataFrame:
+    yahoo = yahoo_symbol(symbol)
+    try:
+        ticker = yf.Ticker(yahoo, session=session)
+    except TypeError:
+        ticker = yf.Ticker(yahoo)
     history = ticker.history(period=config.lookback_period, interval="1d", auto_adjust=True)
     if history is None or history.empty:
         return pd.DataFrame()
     return normalize_ohlcv(history)
+
+
+def _yf_download_history(symbol: str, config: CombinedScannerConfig, session: Any) -> pd.DataFrame:
+    yahoo = yahoo_symbol(symbol)
+    try:
+        history = yf.download(
+            yahoo,
+            period=config.lookback_period,
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+            session=session,
+        )
+    except TypeError:
+        history = yf.download(
+            yahoo,
+            period=config.lookback_period,
+            interval="1d",
+            progress=False,
+            auto_adjust=True,
+            threads=False,
+        )
+    if history is None or history.empty:
+        return pd.DataFrame()
+    if isinstance(history.columns, pd.MultiIndex):
+        history.columns = history.columns.get_level_values(0)
+    return normalize_ohlcv(history)
+
+
+def _download_yahoo_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
+    session = yahoo_http_session()
+    for loader in (_ticker_history, _yf_download_history):
+        try:
+            frame = loader(symbol, config, session)
+        except Exception as exc:
+            logging.debug("Yahoo loader %s failed for %s: %s", loader.__name__, symbol, exc)
+            continue
+        if frame is not None and not frame.empty:
+            return frame
+    return history_from_chart(symbol, config.lookback_period, session)
+
+
+def fetch_history(symbol: str, config: CombinedScannerConfig) -> pd.DataFrame:
+    """Download daily OHLCV, retrying after Yahoo crumb/DNS empty responses.
+
+    The "possibly delisted" yfinance message is often a cookie/crumb failure,
+    not a real NSE delisting. Retry with backoff and fall back to the public
+    chart API used by the Node scanners.
+    """
+    last_error: Exception | None = None
+    for attempt in range(config.max_retries):
+        try:
+            frame = _download_yahoo_history(symbol, config)
+            if frame is not None and not frame.empty:
+                if config.request_delay:
+                    time.sleep(config.request_delay)
+                return frame
+            last_error = ValueError(f"empty price data for {yahoo_symbol(symbol)}")
+        except Exception as exc:
+            last_error = exc
+            logging.warning(
+                "Yahoo download attempt %d/%d failed for %s: %s",
+                attempt + 1,
+                config.max_retries,
+                yahoo_symbol(symbol),
+                exc,
+            )
+            reset_yahoo_http_session()
+        if attempt < config.max_retries - 1:
+            time.sleep(config.retry_delay * (2 ** attempt))
+    if last_error is not None:
+        logging.warning(
+            "All %d Yahoo attempts failed for %s: %s",
+            config.max_retries,
+            yahoo_symbol(symbol),
+            last_error,
+        )
+    if config.request_delay:
+        time.sleep(config.request_delay)
+    return pd.DataFrame()
 
 
 def analyze_symbol(
