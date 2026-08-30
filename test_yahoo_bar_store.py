@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import unittest
 from datetime import date
 from pathlib import Path
@@ -205,6 +206,66 @@ class YahooBarStoreTests(unittest.TestCase):
         self.assertEqual(store.cache_stats()["live"], 0)
         self.assertEqual(store.cache_stats()["hits"], 3)
         live.assert_not_called()
+
+    def test_preloads_universe_once_after_prefetch(self) -> None:
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            ["TCS", "INFY", "ABB"],
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        with patch.object(store, "load_cached_universe", wraps=store.load_cached_universe) as preload:
+            for symbol in ("TCS", "INFY", "ABB"):
+                frame = store.get_daily_history(
+                    symbol,
+                    period="2y",
+                    live_loader=live,
+                    connection=self.conn,
+                    fetch_date=date(2026, 8, 30),
+                )
+                self.assertEqual(len(frame), 40)
+        self.assertEqual(preload.call_count, 1)
+        self.assertEqual(store.cache_stats()["preloads"], 1)
+        live.assert_not_called()
+
+    def test_cache_replay_does_not_reconnect_per_ticker(self) -> None:
+        symbols = [f"S{index:03d}" for index in range(40)]
+        history = sample_bars(40)
+        store.prefetch_symbols(
+            symbols,
+            period="2y",
+            fetch_date=date(2026, 8, 30),
+            connection=self.conn,
+            live_loader=lambda _symbol, _period: history,
+        )
+        store.reset_shared_connection()
+        connects = {"n": 0}
+        real_connect = connect
+
+        def slow_connect(path, **kwargs):
+            connects["n"] += 1
+            time.sleep(0.02)
+            return real_connect(path, **kwargs)
+
+        live = Mock(side_effect=AssertionError("Yahoo must not be called"))
+        started = time.perf_counter()
+        with patch.object(store, "connect", side_effect=slow_connect):
+            for symbol in symbols:
+                frame = store.get_daily_history(
+                    symbol,
+                    period="2y",
+                    live_loader=live,
+                    database_url=self.db,
+                    fetch_date=date(2026, 8, 30),
+                )
+                self.assertEqual(len(frame), 40)
+        elapsed = time.perf_counter() - started
+        self.assertEqual(connects["n"], 1)
+        self.assertEqual(store.cache_stats()["live"], 0)
+        self.assertLess(elapsed, 0.02 * len(symbols) / 2)
 
     def test_enabled_cache_replay_scanners_do_not_call_yahoo(self) -> None:
         import bearisbiasnifty500 as bearish

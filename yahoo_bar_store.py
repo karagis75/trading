@@ -24,6 +24,7 @@ import atexit
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -75,7 +76,9 @@ _LOCK = threading.Lock()
 _SHARED_CONN: Any | None = None
 _SHARED_URL: str | None = None
 _PREFETCH_READY: dict[tuple[int, str], bool] = {}
-_STATS = {"hits": 0, "empty": 0, "live": 0, "connects": 0}
+_UNIVERSE: dict[str, pd.DataFrame] | None = None
+_UNIVERSE_KEY: tuple[Any, ...] | None = None
+_STATS = {"hits": 0, "empty": 0, "live": 0, "connects": 0, "preloads": 0}
 _LAST_SOURCE = "empty"
 _ATEXIT_REGISTERED = False
 
@@ -103,7 +106,7 @@ def cache_stats() -> dict[str, int]:
 
 def reset_shared_connection() -> None:
     """Close the process-wide cache connection. Used by tests."""
-    global _SHARED_CONN, _SHARED_URL, _LAST_SOURCE
+    global _SHARED_CONN, _SHARED_URL, _LAST_SOURCE, _UNIVERSE, _UNIVERSE_KEY
     with _LOCK:
         if _SHARED_CONN is not None:
             try:
@@ -113,7 +116,9 @@ def reset_shared_connection() -> None:
         _SHARED_CONN = None
         _SHARED_URL = None
         _PREFETCH_READY.clear()
-        _STATS.update(hits=0, empty=0, live=0, connects=0)
+        _UNIVERSE = None
+        _UNIVERSE_KEY = None
+        _STATS.update(hits=0, empty=0, live=0, connects=0, preloads=0)
         _LAST_SOURCE = "empty"
 
 
@@ -129,7 +134,8 @@ def _log_cache_stats() -> None:
     message = (
         "Yahoo cache replay: "
         f"hits={_STATS['hits']} empty={_STATS['empty']} "
-        f"live={_STATS['live']} db-connects={_STATS['connects']}"
+        f"live={_STATS['live']} db-connects={_STATS['connects']} "
+        f"preloads={_STATS['preloads']}"
     )
     LOGGER.info(message)
     print(message)
@@ -321,6 +327,10 @@ def load_cached_history(
         ).fetchall()
     if not rows:
         return pd.DataFrame(columns=list(OHLCV_COLUMNS))
+    return _rows_to_frame(rows)
+
+
+def _rows_to_frame(rows: list[Any]) -> pd.DataFrame:
     frame = pd.DataFrame(
         [
             {
@@ -336,6 +346,61 @@ def load_cached_history(
     )
     frame.index = pd.DatetimeIndex(frame.index).normalize()
     return frame.sort_index()
+
+
+def load_cached_universe(
+    connection: Any,
+    *,
+    period: str | None = None,
+    lookback_days: int | None = None,
+    now: pd.Timestamp | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Load every cached symbol for the requested window in one query."""
+    cutoff = lookback_cutoff(period, lookback_days, now=now)
+    rows = connection.execute(
+        """
+        SELECT symbol, bar_date, open, high, low, close, volume
+        FROM yahoo_ohlcv_daily
+        WHERE bar_date >= ?
+        ORDER BY symbol, bar_date
+        """,
+        (cutoff.date().isoformat(),),
+    ).fetchall()
+    grouped: dict[str, list[Any]] = {}
+    for row in rows:
+        symbol = str(_row_get(row, "symbol") or "").strip().upper()
+        grouped.setdefault(symbol, []).append(row)
+    return {symbol: _rows_to_frame(items) for symbol, items in grouped.items()}
+
+
+def _ensure_universe(
+    connection: Any,
+    *,
+    period: str | None,
+    lookback_days: int | None,
+    fetch_date: date | str,
+) -> dict[str, pd.DataFrame]:
+    global _UNIVERSE, _UNIVERSE_KEY
+    day = fetch_date if isinstance(fetch_date, str) else fetch_date.isoformat()
+    key = (id(connection), day, period, lookback_days)
+    if _UNIVERSE is not None and _UNIVERSE_KEY == key:
+        return _UNIVERSE
+    started = time.perf_counter()
+    universe = load_cached_universe(
+        connection, period=period, lookback_days=lookback_days
+    )
+    elapsed = time.perf_counter() - started
+    bars = sum(len(frame) for frame in universe.values())
+    _UNIVERSE = universe
+    _UNIVERSE_KEY = key
+    _STATS["preloads"] += 1
+    message = (
+        f"Yahoo cache preload: {len(universe)} symbol(s), {bars} bars "
+        f"in {elapsed:.2f}s (live Yahoo skipped)"
+    )
+    LOGGER.info(message)
+    print(message)
+    return universe
 
 
 def upsert_bars(
@@ -467,16 +532,28 @@ def get_daily_history(
     cached = pd.DataFrame(columns=list(OHLCV_COLUMNS))
     if conn is not None:
         day_ready = prefetch_day_ready(conn, day)
+        if day_ready:
+            universe = _ensure_universe(
+                conn,
+                period=period,
+                lookback_days=lookback_days,
+                fetch_date=day,
+            )
+            cached = universe.get(
+                display_symbol(symbol),
+                pd.DataFrame(columns=list(OHLCV_COLUMNS)),
+            )
+            _note_source("cache" if not cached.empty else "empty")
+            return cached
         symbol_ready = prefetch_succeeded(conn, symbol, day)
-        reuse_prefetch = day_ready or symbol_ready
         cached = _cached_bars(
             conn,
             symbol,
             period=period,
             lookback_days=lookback_days,
-            reuse_short_listing=reuse_prefetch,
+            reuse_short_listing=symbol_ready,
         )
-        if reuse_prefetch:
+        if symbol_ready:
             _note_source("cache" if not cached.empty else "empty")
             return cached
         if cache_covers(
