@@ -76,6 +76,25 @@ SCANNER_DISPLAY: dict[str, dict[str, Any]] = {
             "Setup Status",
         ],
     },
+    "minervini-vcp": {
+        "title": "Minervini VCP Scanner",
+        "columns": [
+            "Ticker",
+            "Date",
+            "Close",
+            "EMA50",
+            "EMA150",
+            "EMA200",
+            "ATR",
+            "Contractions",
+            "Latest_Pullback_%",
+            "Base_Position",
+            "Stage2_Trend",
+            "VCP",
+            "Sections_Passed",
+            "Qualified",
+        ],
+    },
     "nimblr-minervini-cpr": {
         "title": "Nimblr Minervini CPR",
         "columns": [

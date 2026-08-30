@@ -77,6 +77,25 @@
       }
     },
     {
+      "name": "minervini-vcp",
+      "enabled": true,
+      "script": "minervini_vcp_scanner.py",
+      "args": [
+        "--input",
+        "ind_nifty500list.csv",
+        "--output",
+        "outputs/{date}/Minervini_VCP_Scan.xlsx"
+      ],
+      "tracking": {
+        "enabled": true,
+        "role": "primary_scanner",
+        "format": "xlsx",
+        "symbol_column": "Ticker",
+        "membership_filter": "Qualified=True",
+        "signal_date_column": "Date"
+      }
+    },
+    {
       "name": "nimblr-minervini-cpr",
       "enabled": true,
       "script": "nimblr_minervini_cpr_scanner.py",

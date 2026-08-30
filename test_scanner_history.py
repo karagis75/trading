@@ -276,6 +276,7 @@ class RunnerTrackingTests(unittest.TestCase):
             "bearish-bias-nifty500",
             "nifty500-xy-intersect",
             "rangebound-stocks",
+            "minervini-vcp",
             "nimblr-minervini-cpr",
             "nifty-fib-pinball-bullish",
             "nifty-fib-pinball-bearish",
@@ -283,6 +284,7 @@ class RunnerTrackingTests(unittest.TestCase):
             "combined-option-v8",
         }
         self.assertEqual(set(tracked), expected)
+        self.assertEqual(tracked["minervini-vcp"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nimblr-minervini-cpr"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nifty-fib-pinball-bullish"].sheet, "All")
         self.assertEqual(tracked["combined-option-v8"].role, "downstream")

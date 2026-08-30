@@ -1,0 +1,34 @@
+Mark Minervini VCP / Trend Template — Chartink custom scan
+============================================================
+
+Use this as a Chartink custom scan (Stock scanner → Create scan → Custom scan).
+Adjust the watchlist to Nifty 500 / your universe. Daily timeframe.
+
+Stage 1 — Minervini Trend Template (Stage-2 uptrend)
+----------------------------------------------------
+(close >= ema(close, 150))
+and (close >= ema(close, 200))
+and (ema(close, 150) >= ema(close, 200))
+and (ema(close, 200) > ema(close, 200, 21 days ago))
+and (ema(close, 50) > ema(close, 150))
+and (ema(close, 50) > ema(close, 200))
+and (close > ema(close, 50))
+and (close >= 1.3 * lowest(low, 252))
+and (close >= 0.75 * highest(high, 252))
+
+Stage 2 — Volatility Contraction Pattern (VCP)
+----------------------------------------------
+and (atr(14) < atr(14, 21 days ago))
+and (volume < sma(volume, 20))
+and (highest(high, 10) - lowest(low, 10) < highest(high, 10, 21 days ago) - lowest(low, 10, 21 days ago))
+and (close >= lowest(low, 63) + 0.65 * (highest(high, 63) - lowest(low, 63)))
+and ( (highest(high, 63) - close) / highest(high, 63) * 100 <= 25 )
+
+Notes
+-----
+- Chartink cannot count alternating pivot contractions exactly; the Python
+  scanner in minervini_vcp_scanner.py enforces sequential tightening pullbacks.
+- Tighten Stage 2 by lowering the 25% latest-pullback cap or raising the 0.65
+  base-position floor.
+- For a broader Stage-2 list, run Stage 1 only in Chartink and export hits to
+  the repo scanner for precise VCP validation.
