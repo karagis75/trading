@@ -174,7 +174,7 @@ class CliTests(unittest.TestCase):
             out = Path(tmp) / "Minervini_VCP_Scan.xlsx"
             pd.DataFrame({"Ticker": ["TCS", "INFY"]}).to_csv(src, index=False)
 
-            def fake_analyze(symbol: str, config: scanner.VCPScannerConfig, history=None):
+            def fake_analyze(symbol: str, config: scanner.VCPScannerConfig, history=None, skipped=None):
                 return {
                     "Ticker": symbol,
                     "Date": "2026-08-30",
