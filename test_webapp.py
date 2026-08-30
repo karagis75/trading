@@ -190,6 +190,10 @@ class DashboardHarness(unittest.TestCase):
         rows = scanner_day_rows(connection, "bullish-bias-nifty500", day)
         symbols = {row["symbol"] for row in rows}
         self.assertIn("HDFCBANK", symbols)
+        self.assertEqual(
+            next(row["company_name"] for row in rows if row["symbol"] == "HDFCBANK"),
+            "HDFCBANK Ltd",
+        )
         # DROPPED TCS should still appear for continuity.
         self.assertIn("TCS", symbols)
         statuses = day_statuses(connection, day)
@@ -616,6 +620,8 @@ class MinerviniVCPScannerViewTests(unittest.TestCase):
         day = self.client.get(f"/scanners/minervini-vcp/{self.day.isoformat()}")
         self.assertEqual(day.status_code, 200)
         self.assertIn(b"EICHERMOT", day.data)
+        self.assertIn(b"EICHERMOT Ltd", day.data)
+        self.assertIn(b"Company Name", day.data)
         self.assertIn(b"Latest_Pullback_%", day.data)
         self.assertIn(b"Base_Position", day.data)
         self.assertNotIn(b"TITAN", day.data)

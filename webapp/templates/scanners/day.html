@@ -41,10 +41,10 @@
   <div class="filter-input-wrap">
     <input id="stock-filter-input"
            type="search"
-           placeholder="Type a ticker…"
+           placeholder="Type a ticker or company…"
            value="{{ stock_filter }}"
            autocomplete="off"
-           aria-label="Filter table by stock symbol">
+           aria-label="Filter table by ticker or company name">
     {% if stock_filter %}
       <a class="filter-clear" href="{{ url_for('scanners.scanner_day', scanner_id=scanner_id, scan_date=scan_date) }}" aria-label="Clear filter">×</a>
     {% endif %}
@@ -73,7 +73,8 @@
       {% for row in table_rows %}
         <tr
           class="{% if is_downstream %}{% else %}{% if not row.picked %}is-dropped{% endif %}{% endif %} {% if row.validation_failed %}validation-failed{% elif row.validation_failed is sameas false %}validation-passed{% endif %}"
-          data-symbol="{{ row.symbol }}">
+          data-symbol="{{ row.symbol }}"
+          data-company-name="{{ row.company_name }}">
           <td><span class="badge {{ row.badge.css }}">{{ row.badge.label }}</span></td>
           {% for cell in row.cells %}
             <td>
@@ -116,7 +117,8 @@
     var visible = 0;
     rows.forEach(function (row) {
       var sym = (row.dataset.symbol || '').toUpperCase();
-      var show = !needle || sym.indexOf(needle) !== -1;
+      var name = (row.dataset.companyName || '').toUpperCase();
+      var show = !needle || sym.indexOf(needle) !== -1 || name.indexOf(needle) !== -1;
       row.style.display = show ? '' : 'none';
       if (show) visible++;
     });

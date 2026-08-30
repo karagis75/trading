@@ -220,6 +220,21 @@ def extract_tickers(df: pd.DataFrame) -> list[str]:
     )
 
 
+def extract_company_names(df: pd.DataFrame) -> dict[str, str]:
+    """Build a normalized ticker-to-company-name map from a universe table."""
+    ticker_column = next((column for column in TICKER_COLUMNS if column in df.columns), None)
+    if ticker_column is None or "Company Name" not in df.columns:
+        return {}
+    names: dict[str, str] = {}
+    for _, row in df.iterrows():
+        ticker = display_symbol(str(row.get(ticker_column) or ""))
+        value = row.get("Company Name")
+        name = "" if pd.isna(value) else str(value).strip()
+        if ticker and name and name.lower() not in {"nan", "none", "null"}:
+            names[ticker] = name
+    return names
+
+
 def yahoo_symbol(symbol: str) -> str:
     cleaned = symbol.strip().upper()
     if not cleaned:

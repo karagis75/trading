@@ -7,7 +7,7 @@ import pandas as pd
 
 from scanner_history import db
 from scanner_history.adapters import parse_scanner_output
-from scanner_history.normalize import normalize_symbol
+from scanner_history.normalize import normalize_company_name, normalize_symbol
 from scanner_history.queries import active, changes, stock_history
 from scanner_history.report import write_daily_report
 from scanner_history.cli import main as history_cli
@@ -109,6 +109,11 @@ class NormalizeAndAdapterTests(unittest.TestCase):
     def test_normalize_strips_ns_and_case(self) -> None:
         self.assertEqual(normalize_symbol(" tcs.ns "), "TCS")
         self.assertEqual(normalize_symbol("RELIANCE"), "RELIANCE")
+
+    def test_normalize_company_name_rejects_null_values(self) -> None:
+        self.assertEqual(normalize_company_name(float("nan")), "")
+        self.assertEqual(normalize_company_name(" nan "), "")
+        self.assertEqual(normalize_company_name(" Tata Consultancy Services Ltd. "), "Tata Consultancy Services Ltd.")
 
     def test_parser_reads_qualified_filter_and_all_sheet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -285,6 +290,7 @@ class RunnerTrackingTests(unittest.TestCase):
         }
         self.assertEqual(set(tracked), expected)
         self.assertEqual(tracked["minervini-vcp"].membership_filter, "Qualified=True")
+        self.assertEqual(tracked["minervini-volume-cpr"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nimblr-minervini-cpr"].membership_filter, "Qualified=True")
         self.assertEqual(tracked["nifty-fib-pinball-bullish"].sheet, "All")
         self.assertEqual(tracked["combined-option-v8"].role, "downstream")
