@@ -126,8 +126,15 @@ class PostgresConnection:
             raise
 
     def executemany(self, sql: str, params):
+        # psycopg3's Connection exposes execute() as a convenience shortcut
+        # but has no executemany(); that only exists on a Cursor.
+        rows = list(params)
+        if not rows:
+            return None
         try:
-            return self._connection.executemany(sql.replace("?", "%s"), params)
+            with self._connection.cursor() as cursor:
+                cursor.executemany(sql.replace("?", "%s"), rows)
+                return cursor
         except Exception:
             self._rollback_quietly()
             raise
