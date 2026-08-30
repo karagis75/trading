@@ -455,6 +455,7 @@ class JobsConfigAndCliTests(unittest.TestCase):
                 "bearish_fib_pinball.py",
                 "merge_ticker_candidates.py",
                 "combinedoptionanalyzedv8.py",
+                "validate_daily_outputs.py",
             ],
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")

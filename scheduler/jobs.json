@@ -239,6 +239,25 @@
         "classification_column": "Strategy",
         "confidence_column": "Score"
       }
+    },
+    {
+      "name": "validate-2026-08-30-outputs",
+      "note": "ONE-TIME: compare the existing 30 Aug 2026 output files to a cache-backed replay. Disable this job after you review outputs/2026-08-30/Yahoo_Cache_Validation.xlsx.",
+      "enabled": true,
+      "script": "validate_daily_outputs.py",
+      "args": [
+        "--date",
+        "2026-08-30",
+        "--baseline",
+        "outputs/2026-08-30",
+        "--replay",
+        "--output",
+        "outputs/2026-08-30/Yahoo_Cache_Validation.xlsx"
+      ],
+      "tracking": {
+        "enabled": false,
+        "role": "infrastructure"
+      }
     }
   ]
 }
