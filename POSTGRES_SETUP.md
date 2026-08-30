@@ -64,6 +64,18 @@ python -m scanner_history.migrate_sqlite_to_postgres `
   --target $env:TRADING_DATABASE_URL
 ```
 
+To migrate only Combined Option Spread Analysis (`combined-option-v8`):
+
+```powershell
+python -m scanner_history.migrate_sqlite_to_postgres `
+  --source scanner_history\scanner_history.sqlite3 `
+  --target $env:TRADING_DATABASE_URL `
+  --scanner "Combined Option Spread Analysis"
+```
+
+`--scanner` accepts either the scanner id (`combined-option-v8`) or the
+display name. Existing PostgreSQL rows are skipped (`ON CONFLICT DO NOTHING`),
+so re-running the command is safe.
 ## Verify the connection
 
 ```powershell
@@ -110,4 +122,13 @@ existing rows are skipped):
 python -m scanner_history.migrate_sqlite_to_postgres `
   --source scanner_history\scanner_history.sqlite3 `
   --target $env:TRADING_DATABASE_URL
+```
+
+For Combined Option Spread Analysis only:
+
+```powershell
+python -m scanner_history.migrate_sqlite_to_postgres `
+  --source scanner_history\scanner_history.sqlite3 `
+  --target $env:TRADING_DATABASE_URL `
+  --scanner combined-option-v8
 ```
