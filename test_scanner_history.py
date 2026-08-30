@@ -282,6 +282,7 @@ class RunnerTrackingTests(unittest.TestCase):
             "nifty500-xy-intersect",
             "rangebound-stocks",
             "minervini-vcp",
+            "minervini-volume-cpr",
             "nimblr-minervini-cpr",
             "nifty-fib-pinball-bullish",
             "nifty-fib-pinball-bearish",
