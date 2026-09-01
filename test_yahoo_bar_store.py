@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import time
@@ -180,14 +181,18 @@ class YahooBarStoreTests(unittest.TestCase):
             return sample_bars(3, end="2026-08-31")
 
         with patch.object(store, "load_cached_history") as reload_all:
-            stats = store.prefetch_symbols(
-                ["TCS", "NEWCO"],
-                period="2y",
-                fetch_date=date(2026, 8, 31),
-                connection=self.conn,
-                live_loader=incremental_loader,
-            )
+            with patch("sys.stdout", new_callable=io.StringIO) as buffer:
+                stats = store.prefetch_symbols(
+                    ["TCS", "NEWCO"],
+                    period="2y",
+                    fetch_date=date(2026, 8, 31),
+                    connection=self.conn,
+                    live_loader=incremental_loader,
+                )
         reload_all.assert_not_called()
+        progress = buffer.getvalue()
+        self.assertIn("was=2026-08-28 now=2026-08-31", progress)
+        self.assertIn("was=None now=2026-08-31", progress)
         self.assertEqual(requested, ["8d", "2y"])
         self.assertEqual(stats["incremental"], 1)
         self.assertEqual(stats["full"], 1)
