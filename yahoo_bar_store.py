@@ -669,6 +669,10 @@ def prefetch_symbols(
     }
     try:
         for index, symbol in enumerate(tickers, 1):
+            last_bar = None
+            request_period = period
+            updated_last = None
+            wrote = 0
             try:
                 last_bar = latest_cached_bar(conn, symbol)
                 request_period = refresh_lookback_period(
@@ -678,21 +682,18 @@ def prefetch_symbols(
                     stats["full"] += 1
                 else:
                     stats["incremental"] += 1
-                if index == 1 or index % 25 == 0 or index == len(tickers):
-                    print(
-                        f"Prefetch progress {index}/{len(tickers)} {display_symbol(symbol)} "
-                        f"period={request_period} last_bar={last_bar}",
-                        flush=True,
-                    )
                 frame = loader(symbol, request_period)
                 if frame is None or frame.empty:
                     record_prefetch(
                         conn, symbol, pd.DataFrame(), fetch_date=day, status="empty"
                     )
                     stats["empty"] += 1
+                    updated_last = last_bar
                 else:
-                    stats["bars"] += upsert_bars(conn, symbol, frame)
+                    wrote = upsert_bars(conn, symbol, frame)
+                    stats["bars"] += wrote
                     count, first, last = symbol_bar_span(conn, symbol)
+                    updated_last = last
                     record_prefetch(
                         conn,
                         symbol,
@@ -714,6 +715,12 @@ def prefetch_symbols(
                     error_message=str(exc),
                 )
                 stats["error"] += 1
+            if index == 1 or index % 25 == 0 or index == len(tickers):
+                print(
+                    f"Prefetch progress {index}/{len(tickers)} {display_symbol(symbol)} "
+                    f"period={request_period} was={last_bar} now={updated_last} wrote={wrote}",
+                    flush=True,
+                )
             if request_delay:
                 time.sleep(request_delay)
         return stats
