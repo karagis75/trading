@@ -21,17 +21,18 @@ stocks_bp = Blueprint("stocks", __name__, url_prefix="/stocks")
 def stock_search():
     connection = get_db()
     query = (request.args.get("q") or "").strip()
-    results = (
-        cached(
-            f"stock_search:{query.upper()}",
-            LIVE_TTL,
-            lambda: queries.search_stocks(connection, query),
-        )
-        if query
-        else []
+    stocks = cached(
+        "stock_list:all",
+        LIVE_TTL,
+        lambda: queries.list_stocks(connection, "", limit=600),
     )
     latest = cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
-    return render_template("stocks/search.html", query=query, results=results, latest_date=latest)
+    return render_template(
+        "stocks/search.html",
+        query=query,
+        stocks=stocks,
+        latest_date=latest,
+    )
 
 
 @stocks_bp.route("/<symbol>")
