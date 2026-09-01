@@ -54,6 +54,24 @@ def main() -> None:
     from yahoo_bar_store import display_database_url
 
     print(f"Dashboard database: {display_database_url(cfg.database_url)}")
+    url = str(cfg.database_url or "")
+    if not url.startswith(("postgresql://", "postgres://")):
+        print("WARNING: TRADING_DATABASE_URL is not set to Postgres.")
+        print("Stock View lists Nifty 500 from ind_nifty500list.csv,")
+        print("but scanner history and pinball charts need the daily-job database.")
+    try:
+        from scanner_history import queries as history_queries
+        from scanner_history.db import connect as history_connect
+
+        is_postgres = url.startswith(("postgresql://", "postgres://"))
+        conn = history_connect(cfg.database_url, autocommit=is_postgres)
+        names = history_queries.list_stocks(
+            conn, "", limit=600, universe_path=cfg.universe_path
+        )
+        print(f"Stock universe: {len(names)} names")
+        conn.close()
+    except Exception as exc:
+        print(f"Stock universe: could not load ({exc})")
     print("Pinball chart: Stock View → open a ticker → Open pinball chart")
     # threaded=True: the dev server is single-threaded by default, so a page's
     # HTML, CSS, JS, and the browser's automatic favicon probe get handled one

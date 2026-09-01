@@ -44,10 +44,10 @@
     </ul>
     <p id="filter-no-match" class="empty filter-no-match" hidden>No stocks match “<span id="filter-term"></span>”.</p>
   {% else %}
-    <p class="empty">No stocks in the universe yet. Run the daily job so the Nifty 500 list is loaded.</p>
+    <p class="empty">No stocks in the universe yet. Confirm <code>ind_nifty500list.csv</code> is in the repo and restart <code>python -m webapp</code>. Set <code>TRADING_DATABASE_URL</code> to the same Postgres database the daily job uses.</p>
   {% endif %}
 </section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='stock_filter.js') }}?v=stockfilter1"></script>
+<script src="{{ url_for('static', filename='stock_filter.js') }}?v=stockfilter3"></script>
 {% endblock %}

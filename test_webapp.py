@@ -828,5 +828,51 @@ class MinerviniVolumeCPRScannerViewTests(unittest.TestCase):
         self.assertIn(b"/scanners/minervini-volume-cpr", home.data)
 
 
+class EmptyUniverseFallbackTests(unittest.TestCase):
+    """Stock View must list Nifty 500 even when the stocks table is empty."""
+
+    def setUp(self) -> None:
+        invalidate_cache()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "empty.sqlite3"
+        from scanner_history.db import connect
+
+        connect(self.db_path).close()
+        self.config = AppConfig(database_url=str(self.db_path), jobs=[])
+        self.app = create_app(self.config)
+        self.client = self.app.test_client()
+
+    def tearDown(self) -> None:
+        reset_thread_db(str(self.db_path))
+        invalidate_cache()
+        self.tmp.cleanup()
+
+    def test_stock_view_lists_nifty_csv_when_stocks_table_empty(self) -> None:
+        from scanner_history.db import connect
+
+        connection = connect(self.db_path)
+        count = connection.execute("SELECT COUNT(*) AS n FROM stocks").fetchone()
+        self.assertEqual(int(count["n"]), 0)
+        connection.close()
+
+        page = self.client.get("/stocks/")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn(b"No stocks in the universe yet", page.data)
+        self.assertIn(b"Filter stocks", page.data)
+        self.assertIn(b"INFY", page.data)
+        self.assertIn(b"TCS", page.data)
+        self.assertIn(b"RELIANCE", page.data)
+
+        connection = connect(self.db_path)
+        seeded = connection.execute("SELECT COUNT(*) AS n FROM stocks").fetchone()
+        self.assertGreaterEqual(int(seeded["n"]), 400)
+        connection.close()
+
+    def test_header_search_api_finds_universe_ticker_from_csv(self) -> None:
+        api = self.client.get("/api/stocks/search?q=INFY")
+        self.assertEqual(api.status_code, 200)
+        self.assertEqual(api.get_json()["results"][0]["symbol"], "INFY")
+
+
 if __name__ == "__main__":
     unittest.main()

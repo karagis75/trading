@@ -28,5 +28,14 @@ def api_stock_search():
     limit = request.args.get("limit", default=20, type=int)
     limit = max(1, min(limit or 20, 50))
     connection = get_db()
-    results = queries.search_stocks(connection, query, limit=limit) if query else []
+    results = (
+        queries.search_stocks(
+            connection,
+            query,
+            limit=limit,
+            universe_path=get_config().universe_path,
+        )
+        if query
+        else []
+    )
     return jsonify({"query": query, "results": results})
