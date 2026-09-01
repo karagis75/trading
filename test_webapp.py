@@ -264,6 +264,9 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(found.status_code, 200)
         self.assertIn(b"Summary across scanners", found.data)
         self.assertIn(b"Membership history", found.data)
+        self.assertIn(b"Pinball chart", found.data)
+        self.assertIn(b'id="open-pinball-chart"', found.data)
+        self.assertIn(b"pinball_chart.js", found.data)
 
         missing = self.client.get("/stocks/INFY")
         self.assertEqual(missing.status_code, 200)
@@ -277,6 +280,27 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(api.status_code, 200)
         payload = api.get_json()
         self.assertEqual(payload["results"][0]["symbol"], "RELIANCE")
+
+    def test_pinball_chart_api_reads_cache_not_yahoo(self) -> None:
+        from yahoo_bar_store import upsert_bars
+        from test_fib_pinball import bullish_wave3_rows, rows_to_history
+
+        upsert_bars(self.tracker.connection, "TCS", rows_to_history(bullish_wave3_rows()))
+        empty = self.client.get("/api/stocks/INFY/pinball-chart")
+        self.assertEqual(empty.status_code, 404)
+        self.assertIn("No cached Yahoo bars", empty.get_json()["error"])
+
+        with mock.patch("fib_pinball_common.yf.Ticker") as ticker:
+            with mock.patch("fib_pinball_common.fetch_history") as fetch:
+                response = self.client.get("/api/stocks/TCS/pinball-chart")
+        ticker.assert_not_called()
+        fetch.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["symbol"], "TCS")
+        self.assertEqual(payload["source"], "yahoo_ohlcv_daily")
+        self.assertEqual(payload["wave"]["Wave Position"], "Wave 3")
+        self.assertGreater(len(payload["bars"]), 60)
 
 
 class OptionValidationHighlightTests(unittest.TestCase):

@@ -7,8 +7,25 @@
   <p class="lede">
     {% if info and info.company_name %}{{ info.company_name }}{% if info.industry %} · {{ info.industry }}{% endif %}{% endif %}
     {% if latest_date %} · Latest scan <strong>{{ latest_date }}</strong>{% endif %}
+    · <a href="#pinball-chart" id="open-pinball-chart" class="chart-link" data-symbol="{{ symbol }}">Pinball chart</a>
   </p>
 </section>
+
+<div id="pinball-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close-pinball></div>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pinball-modal-title">
+    <div class="modal-head">
+      <div>
+        <h2 id="pinball-modal-title">{{ symbol }} pinball chart</h2>
+        <p id="pinball-modal-meta" class="muted">Loading cached Yahoo bars…</p>
+      </div>
+      <button type="button" class="modal-close" data-close-pinball aria-label="Close pinball chart">×</button>
+    </div>
+    <div class="pinball-canvas-wrap">
+      <canvas id="pinball-canvas" width="920" height="480"></canvas>
+    </div>
+  </div>
+</div>
 
 {% if not found %}
   <div class="banner status-failed">{{ error_message }}</div>
@@ -94,4 +111,7 @@
     {% endif %}
   </section>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='pinball_chart.js') }}"></script>
 {% endblock %}
