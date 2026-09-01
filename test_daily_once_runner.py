@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -334,6 +335,34 @@ class DailyOnceRunnerTests(unittest.TestCase):
         report = daily.run()
         self.assertEqual(report.status, runner.STATUS_SUCCESS)
 
+    def test_job_stdout_is_copied_into_the_daily_log(self) -> None:
+        jobs = [runner.JobSpec("ok", "ok.py")]
+        daily = runner.DailyOnceRunner(
+            repo_root=self.root,
+            jobs=jobs,
+            state_path=self.state_path,
+            lock_path=self.lock_path,
+            today_fn=lambda: self.today,
+            now_fn=self._clock,
+            lock_factory=lambda path: FakeLock(path),
+        )
+        (self.root / "ok.py").write_text(
+            "print('Prefetch progress 1/1 TCS period=8d last_bar=2026-08-28')\n",
+            encoding="utf-8",
+        )
+        buffer = io.StringIO()
+        handler = logging.StreamHandler(buffer)
+        log = logging.getLogger("daily_once_runner")
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
+        try:
+            report = daily.run()
+        finally:
+            log.removeHandler(handler)
+            handler.close()
+        self.assertEqual(report.status, runner.STATUS_SUCCESS)
+        self.assertIn("ok: Prefetch progress 1/1 TCS period=8d last_bar=2026-08-28", buffer.getvalue())
+
     def test_date_output_directory_is_created_before_job_runs(self) -> None:
         output_path = "outputs/{date}/scan.txt"
         jobs = [runner.JobSpec("scan", "scan.py", args=("--output", output_path))]
@@ -459,6 +488,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")
         self.assertFalse(nimblr.enabled)
+        prefetch = next(job for job in jobs if job.name == "prefetch-yahoo-ohlcv")
+        self.assertEqual(prefetch.timeout_seconds, 1200)
         cache_replay = {
             "bullish-bias-nifty500",
             "bearish-bias-nifty500",
@@ -710,6 +741,88 @@ class JobsConfigAndCliTests(unittest.TestCase):
             self.assertTrue(second.acquire())
             second.release()
 
+    def test_already_running_includes_leftover_lock_text(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            lock_path = root / "run.lock"
+            lock_path.write_text('{"pid": 1234, "run_date": "2026-09-01"}\n', encoding="utf-8")
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=[runner.JobSpec("scan", "scan.py")],
+                state_path=root / "state.json",
+                lock_path=lock_path,
+                today_fn=lambda: date(2026, 9, 1),
+                now_fn=lambda: datetime(2026, 9, 1, 9, 26, 0),
+                lock_factory=lambda path: FakeLock(path, held=True),
+            )
+            report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_ALREADY_RUNNING)
+            self.assertIn("1234", report.message)
+
+    def test_timeout_kills_child_that_prints_then_hangs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "hang.py"
+            script.write_text(
+                "import time\nprint('started', flush=True)\ntime.sleep(30)\n",
+                encoding="utf-8",
+            )
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=[runner.JobSpec("hang", "hang.py", timeout_seconds=1.2)],
+                state_path=root / "state.json",
+                lock_path=root / "run.lock",
+                today_fn=lambda: date(2026, 9, 1),
+                heartbeat_seconds=0.3,
+            )
+            with self.assertLogs(runner.LOGGER, level="INFO") as captured:
+                report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_FAILED)
+            self.assertIn("timed out after 1.2s", report.jobs[0].message)
+            joined = "\n".join(captured.output)
+            self.assertIn("hang: started", joined)
+            self.assertIn("still running", joined)
+            self.assertLess(report.jobs[0].duration_seconds, 8)
+
+    def test_timeout_kills_silent_hang(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "silent.py"
+            script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=[runner.JobSpec("silent", "silent.py", timeout_seconds=1.0)],
+                state_path=root / "state.json",
+                lock_path=root / "run.lock",
+                today_fn=lambda: date(2026, 9, 1),
+                heartbeat_seconds=0.4,
+            )
+            report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_FAILED)
+            self.assertIn("timed out", report.jobs[0].message)
+            self.assertGreaterEqual(report.jobs[0].duration_seconds, 0.8)
+            self.assertLess(report.jobs[0].duration_seconds, 8)
+
+    def test_clears_leftover_lock_from_interrupted_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            script = root / "ok.py"
+            script.write_text("print('ok', flush=True)\n", encoding="utf-8")
+            lock_path = root / "run.lock"
+            lock_path.write_text('{"pid": 99, "run_date": "2026-09-01"}\n', encoding="utf-8")
+            daily = runner.DailyOnceRunner(
+                repo_root=root,
+                jobs=[runner.JobSpec("ok", "ok.py")],
+                state_path=root / "state.json",
+                lock_path=lock_path,
+                today_fn=lambda: date(2026, 9, 1),
+            )
+            with self.assertLogs(runner.LOGGER, level="INFO") as captured:
+                report = daily.run()
+            self.assertEqual(report.status, runner.STATUS_SUCCESS)
+            self.assertIn("Cleared leftover lock", "\n".join(captured.output))
+            self.assertEqual(lock_path.read_text(encoding="utf-8").strip(), "")
+
 
 class SchedulerScriptTests(unittest.TestCase):
     def test_windows_scripts_exist_and_describe_once_per_day_behavior(self) -> None:
@@ -719,6 +832,7 @@ class SchedulerScriptTests(unittest.TestCase):
         self.assertIn("New-ScheduledTaskTrigger -Daily -At $DailyAt", register)
         self.assertIn("New-ScheduledTaskTrigger -AtLogOn", register)
         self.assertIn("StartWhenAvailable", register)
+        self.assertIn("LastTaskResult", register)
         self.assertIn("daily_once_runner.py", run)
         self.assertIn("Unregister-ScheduledTask", unregister)
 

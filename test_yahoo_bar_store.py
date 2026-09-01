@@ -114,14 +114,21 @@ class YahooBarStoreTests(unittest.TestCase):
             connection=self.conn,
             live_loader=lambda _symbol, _period: history,
         )
+        real_history = store.get_daily_history
+
+        def history_for_prefetch_day(symbol, period="2y", **kwargs):
+            kwargs.setdefault("fetch_date", date(2026, 8, 30))
+            return real_history(symbol, period, **kwargs)
+
         with patch.dict(os.environ, {"TRADING_YAHOO_CACHE_DB": str(self.db)}):
-            with patch.object(nimblr, "_download_yahoo_history") as yf_live:
-                with patch.object(volume, "history_from_chart") as chart_live:
-                    vcp = nimblr.fetch_history("ABB", nimblr.CombinedScannerConfig(lookback_period="2y"))
-                    cpr = volume.fetch_volume_cpr_history(
-                        "ABB",
-                        volume.VolumeCPRScannerConfig(lookback_period="2y", max_retries=1, retry_delay=0.0),
-                    )
+            with patch.object(store, "get_daily_history", side_effect=history_for_prefetch_day):
+                with patch.object(nimblr, "_download_yahoo_history") as yf_live:
+                    with patch.object(volume, "history_from_chart") as chart_live:
+                        vcp = nimblr.fetch_history("ABB", nimblr.CombinedScannerConfig(lookback_period="2y"))
+                        cpr = volume.fetch_volume_cpr_history(
+                            "ABB",
+                            volume.VolumeCPRScannerConfig(lookback_period="2y", max_retries=1, retry_delay=0.0),
+                        )
         self.assertEqual(len(vcp), 40)
         self.assertEqual(len(cpr), 40)
         yf_live.assert_not_called()
@@ -172,13 +179,15 @@ class YahooBarStoreTests(unittest.TestCase):
             requested.append(period)
             return sample_bars(3, end="2026-08-31")
 
-        stats = store.prefetch_symbols(
-            ["TCS", "NEWCO"],
-            period="2y",
-            fetch_date=date(2026, 8, 31),
-            connection=self.conn,
-            live_loader=incremental_loader,
-        )
+        with patch.object(store, "load_cached_history") as reload_all:
+            stats = store.prefetch_symbols(
+                ["TCS", "NEWCO"],
+                period="2y",
+                fetch_date=date(2026, 8, 31),
+                connection=self.conn,
+                live_loader=incremental_loader,
+            )
+        reload_all.assert_not_called()
         self.assertEqual(requested, ["8d", "2y"])
         self.assertEqual(stats["incremental"], 1)
         self.assertEqual(stats["full"], 1)
@@ -338,7 +347,14 @@ class YahooBarStoreTests(unittest.TestCase):
             "TRADING_YAHOO_CACHE_DB": str(self.db),
             "TRADING_DATABASE_URL": str(self.db),
         }
+        real_history = store.get_daily_history
+
+        def history_for_prefetch_day(symbol, period="2y", **kwargs):
+            kwargs.setdefault("fetch_date", date(2026, 8, 30))
+            return real_history(symbol, period, **kwargs)
+
         with patch.dict(os.environ, env, clear=False):
+          with patch.object(store, "get_daily_history", side_effect=history_for_prefetch_day):
             with patch.object(bullish.yf, "Ticker", side_effect=live_error):
                 with patch.object(bearish.yf, "Ticker", side_effect=live_error):
                     with patch.object(rangebound.yf, "Ticker", side_effect=live_error):
