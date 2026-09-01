@@ -355,7 +355,7 @@ main.wrap { padding: 2rem 0 3rem; }
   color: var(--text);
   font: inherit;
   font-size: 0.88rem;
-  width: 16rem;
+  width: 22rem;
   max-width: calc(100vw - 4rem);
 }
 .filter-input-wrap input:focus {
