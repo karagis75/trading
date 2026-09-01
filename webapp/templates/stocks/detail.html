@@ -7,11 +7,13 @@
   <p class="lede">
     {% if info and info.company_name %}{{ info.company_name }}{% if info.industry %} · {{ info.industry }}{% endif %}{% endif %}
     {% if latest_date %} · Latest scan <strong>{{ latest_date }}</strong>{% endif %}
-    · <a href="#pinball-chart" id="open-pinball-chart" class="chart-link" data-symbol="{{ symbol }}">Pinball chart</a>
+  </p>
+  <p class="chart-actions">
+    <button type="button" id="open-pinball-chart" class="chart-button" data-symbol="{{ symbol }}">Open pinball chart</button>
   </p>
 </section>
 
-<div id="pinball-modal" class="modal" hidden>
+<div id="pinball-modal" class="modal" hidden aria-hidden="true">
   <div class="modal-backdrop" data-close-pinball></div>
   <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="pinball-modal-title">
     <div class="modal-head">
@@ -113,5 +115,5 @@
 {% endif %}
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='pinball_chart.js') }}"></script>
+<script src="{{ url_for('static', filename='pinball_chart.js') }}?v=pinball2"></script>
 {% endblock %}

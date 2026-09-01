@@ -14,6 +14,8 @@
 
   function openModal() {
     modal.hidden = false;
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
     document.body.classList.add("modal-open");
     if (!lastPayload) {
       loadChart();
@@ -24,6 +26,8 @@
 
   function closeModal() {
     modal.hidden = true;
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
     document.body.classList.remove("modal-open");
   }
 
@@ -34,7 +38,8 @@
       const payload = await response.json();
       lastPayload = payload;
       if (!payload.bars || payload.bars.length === 0) {
-        setMeta(payload.error || "No cached bars.");
+        const db = payload.database ? ` Database: ${payload.database}.` : "";
+        setMeta((payload.error || "No cached bars.") + db);
         clearCanvas();
         return;
       }

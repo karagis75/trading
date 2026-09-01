@@ -21,6 +21,7 @@ import nifty_pinball_yahoo as bullish
 from yahoo_bar_store import (
     DEFAULT_DB,
     cache_database_url,
+    display_database_url,
     display_symbol,
     load_cached_history,
 )
@@ -123,20 +124,29 @@ def build_pinball_chart(
         early_wave1_min_move=0.05,
         early_wave1_max_move=1.0,
     )
+    resolved_db = cache_database_url(database_url) or DEFAULT_DB
+    db_label = display_database_url(resolved_db)
     history = cache_only_history(
         ticker, cfg, connection=connection, database_url=database_url
     )
     if history is None or history.empty:
+        sqlite_hint = ""
+        if "sqlite" in str(resolved_db).lower() or str(resolved_db).endswith(".sqlite3"):
+            sqlite_hint = (
+                " This dashboard is using local SQLite, not Postgres. "
+                "Set TRADING_DATABASE_URL and restart python -m webapp."
+            )
         return {
             "symbol": ticker,
             "source": "yahoo_ohlcv_daily",
+            "database": db_label,
             "bars": [],
             "wave": None,
             "levels": [],
             "markers": [],
             "error": (
-                f"No cached Yahoo bars for {ticker}. "
-                "Run prefetch-yahoo-ohlcv first."
+                f"No cached Yahoo bars for {ticker} in {db_label}."
+                f"{sqlite_hint}"
             ),
         }
 
@@ -150,6 +160,7 @@ def build_pinball_chart(
     return {
         "symbol": ticker,
         "source": "yahoo_ohlcv_daily",
+        "database": db_label,
         "bars": window,
         "wave": payload_wave,
         "levels": _levels(wave) if wave else [],

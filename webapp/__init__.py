@@ -37,6 +37,8 @@ def create_app(config: AppConfig | None = None) -> Flask:
             if re.match(r"^/scanners/[^/]+/20\d\d-\d\d-\d\d$", path):
                 response.cache_control.public = True
                 response.cache_control.max_age = 3600   # 1 h client cache for past days
+            elif path.startswith("/static/"):
+                response.cache_control.no_cache = True
             elif path.startswith("/api/"):
                 response.cache_control.max_age = 30     # API search: 30 s
             elif path == "/" or path.startswith(("/scanners", "/stocks")):
@@ -49,6 +51,10 @@ def create_app(config: AppConfig | None = None) -> Flask:
 def main() -> None:
     app = create_app()
     cfg = app.config["TRADING_CONFIG"]
+    from yahoo_bar_store import display_database_url
+
+    print(f"Dashboard database: {display_database_url(cfg.database_url)}")
+    print("Pinball chart: Stock View → open a ticker → Open pinball chart")
     # threaded=True: the dev server is single-threaded by default, so a page's
     # HTML, CSS, JS, and the browser's automatic favicon probe get handled one
     # at a time instead of concurrently — the exact cause of a per-page "hitch"
