@@ -20,12 +20,22 @@ stocks_bp = Blueprint("stocks", __name__, url_prefix="/stocks")
 @stocks_bp.route("/")
 def stock_search():
     connection = get_db()
+    cfg = get_config()
     query = (request.args.get("q") or "").strip()
     stocks = cached(
         "stock_list:all",
         LIVE_TTL,
-        lambda: queries.list_stocks(connection, "", limit=600),
+        lambda: queries.list_stocks(
+            connection, "", limit=600, universe_path=cfg.universe_path
+        ),
     )
+    if not stocks:
+        from ..perf import invalidate
+
+        invalidate("stock_list:all")
+        stocks = queries.list_stocks(
+            connection, "", limit=600, universe_path=cfg.universe_path
+        )
     latest = cached("latest_scan_date", SHORT_TTL, lambda: queries.latest_scan_date(connection))
     return render_template(
         "stocks/search.html",

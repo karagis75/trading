@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any, Iterable
 
-from .normalize import normalize_symbol
+from .normalize import load_universe, normalize_symbol
+
+_REPO_UNIVERSE = Path(__file__).resolve().parent.parent / "ind_nifty500list.csv"
 
 
 def _rows(connection: sqlite3.Connection, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
@@ -375,23 +378,97 @@ def search_stocks(
     text: str,
     *,
     limit: int = 20,
+    universe_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
     """Search tickers and company names in the universe (Nifty 500 and history)."""
-    return list_stocks(connection, text, limit=limit)
+    return list_stocks(connection, text, limit=limit, universe_path=universe_path)
 
 
-def list_stocks(
-    connection: sqlite3.Connection,
-    text: str = "",
-    *,
-    limit: int = 600,
+def _row_dict(row: Any) -> dict[str, Any]:
+    if row is None:
+        return {}
+    if isinstance(row, dict):
+        return dict(row)
+    return {str(key): row[key] for key in row.keys()}
+
+
+def _csv_universe_rows(
+    universe_path: str | Path,
+    needle: str,
+    limit: int,
 ) -> list[dict[str, Any]]:
-    """List stocks for Stock View. Empty text returns the universe; text filters it."""
-    needle = str(text or "").strip().upper()
-    limit = max(1, min(int(limit or 600), 600))
+    path = Path(universe_path)
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    for stock in load_universe(path):
+        haystack = f"{stock.symbol} {stock.company_name} {stock.industry}".upper()
+        if needle and needle not in haystack:
+            continue
+        rows.append(
+            {
+                "symbol": stock.symbol,
+                "company_name": stock.company_name,
+                "industry": stock.industry,
+                "active_in_universe": 1,
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def seed_stocks_from_universe(
+    connection: sqlite3.Connection,
+    universe_path: str | Path,
+) -> int:
+    """Insert Nifty 500 CSV rows into ``stocks`` when the table is empty."""
+    path = Path(universe_path)
+    if not path.is_file():
+        return 0
+    today = date.today().isoformat()
+    loaded = load_universe(path)
+    for stock in loaded:
+        connection.execute(
+            """
+            INSERT INTO stocks(
+                symbol, company_name, industry, series, isin,
+                active_in_universe, first_universe_date, last_universe_date
+            )
+            VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                company_name=COALESCE(NULLIF(excluded.company_name, ''), stocks.company_name),
+                industry=excluded.industry,
+                series=excluded.series,
+                isin=excluded.isin,
+                active_in_universe=1,
+                last_universe_date=excluded.last_universe_date
+            """,
+            (
+                stock.symbol,
+                stock.company_name,
+                stock.industry,
+                stock.series,
+                stock.isin,
+                today,
+                today,
+            ),
+        )
+    try:
+        connection.commit()
+    except Exception:
+        pass
+    return len(loaded)
+
+
+def _list_stocks_from_db(
+    connection: sqlite3.Connection,
+    needle: str,
+    limit: int,
+) -> list[Any]:
     if needle:
         pattern = f"%{needle}%"
-        rows = _rows(
+        return _rows(
             connection,
             """
             SELECT
@@ -408,22 +485,56 @@ def list_stocks(
             """,
             (pattern, pattern, pattern, limit),
         )
-    else:
-        rows = _rows(
-            connection,
-            """
-            SELECT
-                st.symbol,
-                st.company_name,
-                st.industry,
-                st.active_in_universe
-            FROM stocks st
-            ORDER BY st.symbol
-            LIMIT ?
-            """,
-            (limit,),
-        )
-    return [dict(row) for row in rows]
+    return _rows(
+        connection,
+        """
+        SELECT
+            st.symbol,
+            st.company_name,
+            st.industry,
+            st.active_in_universe
+        FROM stocks st
+        ORDER BY st.symbol
+        LIMIT ?
+        """,
+        (limit,),
+    )
+
+
+def list_stocks(
+    connection: sqlite3.Connection,
+    text: str = "",
+    *,
+    limit: int = 600,
+    universe_path: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    """List stocks for Stock View. Empty text returns the universe; text filters it.
+
+    If the ``stocks`` table is empty (local SQLite, or a database the daily job
+    has not seeded), load ``ind_nifty500list.csv`` and seed the table so Stock
+    View still lists Nifty 500 names.
+    """
+    needle = str(text or "").strip().upper()
+    limit = max(1, min(int(limit or 600), 600))
+    csv_path = Path(universe_path) if universe_path else _REPO_UNIVERSE
+
+    try:
+        rows = _list_stocks_from_db(connection, needle, limit)
+        if rows:
+            return [_row_dict(row) for row in rows]
+    except Exception:
+        rows = []
+
+    if csv_path.is_file():
+        try:
+            seed_stocks_from_universe(connection, csv_path)
+            rows = _list_stocks_from_db(connection, needle, limit)
+            if rows:
+                return [_row_dict(row) for row in rows]
+        except Exception:
+            pass
+        return _csv_universe_rows(csv_path, needle, limit)
+    return []
 
 
 def stock_info(connection: sqlite3.Connection, symbol: str) -> dict[str, Any] | None:
