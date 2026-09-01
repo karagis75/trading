@@ -5,14 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd
-
 import fib_pinball_common as common
 import nifty_pinball_yahoo as bullish
 import stock_fib_pinball_chart as chart
 import yahoo_bar_store as store
 from scanner_history.db import connect
-from test_fib_pinball import bullish_wave3_rows, rows_to_history
+from test_fib_pinball import bearish_wave3_rows, bullish_wave3_rows, rows_to_history
 
 
 class StockFibPinballChartTests(unittest.TestCase):
@@ -39,7 +37,12 @@ class StockFibPinballChartTests(unittest.TestCase):
         self.assertEqual(payload["source"], "yahoo_ohlcv_daily")
         self.assertGreater(len(payload["bars"]), 60)
         self.assertEqual(payload["wave"]["Wave Position"], "Wave 3")
-        self.assertEqual(payload["wave"]["Confidence"], 80)
+        self.assertEqual(payload["regime"]["side"], "bullish")
+        self.assertEqual(payload["wave"]["Side"], "bullish")
+        self.assertTrue(payload["bars"][0]["ema9"])
+        self.assertTrue(payload["bars"][0]["ema18"])
+        self.assertEqual(payload["stops"]["tight"], "EMA9")
+        self.assertEqual(payload["stops"]["swing"], "EMA18")
         labels = {item["label"] for item in payload["markers"]}
         self.assertEqual(labels, {"W0", "W1", "W2"})
         self.assertTrue(any(item["label"] == "1.618" for item in payload["levels"]))
@@ -54,6 +57,17 @@ class StockFibPinballChartTests(unittest.TestCase):
         self.assertIn("No cached Yahoo bars", payload["error"])
         self.assertTrue(payload["database"])
 
+    def test_bearish_wave_when_price_is_below_weekly_ema20(self) -> None:
+        self._seed("ADANIPORTS", bearish_wave3_rows())
+        payload = chart.build_pinball_chart("ADANIPORTS", connection=self.conn)
+        self.assertEqual(payload["regime"]["side"], "bearish")
+        self.assertIsNotNone(payload["wave"])
+        self.assertIn("Bearish", payload["wave"]["Wave Position"])
+        self.assertEqual(payload["wave"]["Side"], "bearish")
+        self.assertTrue(any(bar.get("ema9") and bar.get("ema18") for bar in payload["bars"]))
+        labels = {item["label"] for item in payload["markers"]}
+        self.assertEqual(labels, {"W0", "W1", "W2"})
+
     def test_cli_requires_one_ticker_and_prints_json(self) -> None:
         self._seed("TCS", bullish_wave3_rows())
         with patch.object(chart, "cache_only_history", wraps=chart.cache_only_history):
@@ -65,6 +79,7 @@ class StockFibPinballChartTests(unittest.TestCase):
         payload = json.loads(buffer.getvalue())
         self.assertEqual(payload["symbol"], "TCS")
         self.assertEqual(payload["wave"]["Wave Position"], "Wave 3")
+        self.assertEqual(payload["regime"]["side"], "bullish")
 
     def test_original_scanner_module_is_unchanged_entry_point(self) -> None:
         self.assertTrue(hasattr(bullish, "analyze_bullish"))

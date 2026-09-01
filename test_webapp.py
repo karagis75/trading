@@ -301,6 +301,10 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(payload["symbol"], "TCS")
         self.assertEqual(payload["source"], "yahoo_ohlcv_daily")
         self.assertEqual(payload["wave"]["Wave Position"], "Wave 3")
+        self.assertEqual(payload["regime"]["side"], "bullish")
+        self.assertIn("ema9", payload["bars"][0])
+        self.assertIn("ema18", payload["bars"][0])
+        self.assertEqual(payload["stops"]["ema9"], payload["bars"][-1]["ema9"])
         self.assertGreater(len(payload["bars"]), 60)
 
 
