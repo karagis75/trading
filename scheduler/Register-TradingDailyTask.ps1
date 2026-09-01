@@ -65,6 +65,7 @@ $description = @(
     "Run trading scanners daily at $DailyAt local time, or the first time this machine is opened."
     'After a successful run the Python marker stops later triggers for the rest of that calendar day.'
     'A failed run is retried on the next 8 AM or logon trigger.'
+    'ExecutionTimeLimit is 6 hours. Prefetch itself times out after 20 minutes; if the daily log stops mid-job, check LastTaskResult (0xFFFD0000 means the task was killed).'
 ) -join ' '
 
 Register-ScheduledTask `

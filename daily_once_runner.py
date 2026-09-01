@@ -17,6 +17,8 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -79,6 +81,17 @@ class FileLock:
         self._handle = handle
         return True
 
+    def write_holder(self, payload: dict[str, Any]) -> None:
+        """Record which process holds the lock so a killed run is diagnosable."""
+        handle = self._handle
+        if handle is None:
+            return
+        handle.seek(0)
+        handle.truncate()
+        json.dump(payload, handle)
+        handle.write("\n")
+        handle.flush()
+
     def release(self) -> None:
         handle = self._handle
         if handle is None:
@@ -88,10 +101,13 @@ class FileLock:
                 import msvcrt
 
                 handle.seek(0)
+                handle.truncate()
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
                 import fcntl
 
+                handle.seek(0)
+                handle.truncate()
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         finally:
             handle.close()
@@ -109,6 +125,14 @@ class FileLock:
         tb: TracebackType | None,
     ) -> None:
         self.release()
+
+
+def leftover_lock_text(path: Path) -> str:
+    """Return lock-file contents left behind by a previous process."""
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 @dataclass(frozen=True)
@@ -328,6 +352,7 @@ class DailyOnceRunner:
         universe_path: Path | None = None,
         tracker: Any = None,
         write_history_report: bool = True,
+        heartbeat_seconds: float = 60.0,
     ) -> None:
         self.repo_root = repo_root
         self.jobs = list(jobs)
@@ -343,6 +368,7 @@ class DailyOnceRunner:
         self._injected_tracker = tracker
         self._live_tracker = None
         self.write_history_report = write_history_report
+        self.heartbeat_seconds = heartbeat_seconds
 
     def run(self, force: bool = False) -> RunReport:
         today = self.today_fn()
@@ -363,9 +389,12 @@ class DailyOnceRunner:
                 finished_at=self.now_fn(),
             )
 
+        leftover = leftover_lock_text(self.lock_path)
         lock = self.lock_factory(self.lock_path)
         if not lock.acquire():
             message = "Another daily run is already in progress; not starting a second copy."
+            if leftover:
+                message = f"{message} lock={leftover}"
             LOGGER.info(message)
             return RunReport(
                 status=STATUS_ALREADY_RUNNING,
@@ -376,6 +405,20 @@ class DailyOnceRunner:
             )
 
         try:
+            if leftover:
+                LOGGER.info(
+                    "Cleared leftover lock from a previous interrupted run: %s",
+                    leftover,
+                )
+            write_holder = getattr(lock, "write_holder", None)
+            if callable(write_holder):
+                write_holder(
+                    {
+                        "pid": os.getpid(),
+                        "started_at": started.isoformat(timespec="seconds"),
+                        "run_date": today.isoformat(),
+                    }
+                )
             previous_job_results = {} if force else job_results_for_today(state, today)
             results: list[JobResult] = []
             for job in self.jobs:
@@ -565,10 +608,13 @@ class DailyOnceRunner:
         """Run a job and copy its stdout/stderr into the daily scheduler log.
 
         Scheduled tasks have no console, so prefetch ``print`` lines were
-        previously invisible until the process exited.
+        previously invisible until the process exited. Timeout is enforced
+        while stdout is still open; a hang after the first print used to
+        wait until Task Scheduler killed the whole tree at six hours.
         """
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
+        started = time.monotonic()
         process = subprocess.Popen(
             list(command),
             cwd=self.repo_root,
@@ -578,20 +624,55 @@ class DailyOnceRunner:
             env=env,
         )
         assert process.stdout is not None
-        try:
+        LOGGER.info("Job %s child pid=%s", job_name, process.pid)
+
+        def pump_stdout() -> None:
+            assert process.stdout is not None
             for line in process.stdout:
                 text = line.rstrip()
                 if text:
                     LOGGER.info("%s: %s", job_name, text)
-            return process.wait(timeout=timeout_seconds)
+
+        pump = threading.Thread(
+            target=pump_stdout,
+            name=f"{job_name}-stdout",
+            daemon=True,
+        )
+        pump.start()
+        heartbeat = max(self.heartbeat_seconds, 0.1)
+        deadline = None if timeout_seconds is None else started + timeout_seconds
+        try:
+            while True:
+                remaining = None if deadline is None else deadline - time.monotonic()
+                if remaining is not None and remaining <= 0:
+                    raise subprocess.TimeoutExpired(list(command), timeout_seconds)
+                wait_for = heartbeat if remaining is None else min(heartbeat, remaining)
+                try:
+                    returncode = process.wait(timeout=wait_for)
+                    pump.join(timeout=5)
+                    return returncode
+                except subprocess.TimeoutExpired:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise
+                    LOGGER.info(
+                        "Job %s still running (pid=%s, elapsed=%.0fs).",
+                        job_name,
+                        process.pid,
+                        time.monotonic() - started,
+                    )
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            pump.join(timeout=5)
             raise
         except Exception:
             process.kill()
             process.wait()
+            pump.join(timeout=5)
             raise
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
