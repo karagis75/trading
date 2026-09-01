@@ -376,29 +376,53 @@ def search_stocks(
     *,
     limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Search symbols/company names among stocks picked by at least one scanner."""
+    """Search tickers and company names in the universe (Nifty 500 and history)."""
+    return list_stocks(connection, text, limit=limit)
+
+
+def list_stocks(
+    connection: sqlite3.Connection,
+    text: str = "",
+    *,
+    limit: int = 600,
+) -> list[dict[str, Any]]:
+    """List stocks for Stock View. Empty text returns the universe; text filters it."""
     needle = str(text or "").strip().upper()
-    if not needle:
-        return []
-    pattern = f"%{needle}%"
-    rows = _rows(
-        connection,
-        """
-        SELECT DISTINCT
-            st.symbol,
-            st.company_name,
-            st.industry
-        FROM stocks st
-        JOIN stock_scanner_daily d ON d.symbol = st.symbol
-        JOIN scan_runs r ON r.run_id = d.run_id
-        WHERE d.picked = 1
-          AND r.is_canonical = 1
-          AND (UPPER(st.symbol) LIKE ? OR UPPER(COALESCE(st.company_name, '')) LIKE ?)
-        ORDER BY st.symbol
-        LIMIT ?
-        """,
-        (pattern, pattern, limit),
-    )
+    limit = max(1, min(int(limit or 600), 600))
+    if needle:
+        pattern = f"%{needle}%"
+        rows = _rows(
+            connection,
+            """
+            SELECT
+                st.symbol,
+                st.company_name,
+                st.industry,
+                st.active_in_universe
+            FROM stocks st
+            WHERE UPPER(st.symbol) LIKE ?
+               OR UPPER(COALESCE(st.company_name, '')) LIKE ?
+               OR UPPER(COALESCE(st.industry, '')) LIKE ?
+            ORDER BY st.symbol
+            LIMIT ?
+            """,
+            (pattern, pattern, pattern, limit),
+        )
+    else:
+        rows = _rows(
+            connection,
+            """
+            SELECT
+                st.symbol,
+                st.company_name,
+                st.industry,
+                st.active_in_universe
+            FROM stocks st
+            ORDER BY st.symbol
+            LIMIT ?
+            """,
+            (limit,),
+        )
     return [dict(row) for row in rows]
 
 

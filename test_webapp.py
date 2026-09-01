@@ -12,6 +12,7 @@ import pandas as pd
 
 from scanner_history.queries import (
     day_statuses,
+    list_stocks,
     recent_scan_dates,
     scanner_dates,
     scanner_day_rows,
@@ -206,8 +207,15 @@ class DashboardHarness(unittest.TestCase):
         self.assertFalse(stock_in_any_scanner(connection, "INFY"))
         matches = search_stocks(connection, "rel")
         self.assertEqual(matches[0]["symbol"], "RELIANCE")
-        none = search_stocks(connection, "INFY")
-        self.assertEqual(none, [])
+        infy = search_stocks(connection, "INFY")
+        self.assertEqual(infy[0]["symbol"], "INFY")
+        universe = list_stocks(connection, "", limit=600)
+        self.assertEqual(
+            {row["symbol"] for row in universe},
+            {"HDFCBANK", "INFY", "RELIANCE", "TCS", "WIPRO"},
+        )
+        by_industry = list_stocks(connection, "IT")
+        self.assertGreaterEqual(len(by_industry), 5)
         summary = stock_summary(connection, "TCS")
         self.assertTrue(any(row["scanner_id"] == "bullish-bias-nifty500" for row in summary))
         matrix = stock_change_matrix(connection, "TCS", days=6)
@@ -256,9 +264,19 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(missing.status_code, 404)
 
     def test_routes_stocks_and_api(self) -> None:
+        landing = self.client.get("/stocks/")
+        self.assertEqual(landing.status_code, 200)
+        self.assertIn(b"Filter stocks", landing.data)
+        self.assertIn(b"Search stocks", landing.data)
+        self.assertIn(b"TCS", landing.data)
+        self.assertIn(b"INFY", landing.data)
+        self.assertIn(b"RELIANCE", landing.data)
+        self.assertIn(b"stock_filter.js", landing.data)
+
         search = self.client.get("/stocks/?q=TCS")
         self.assertEqual(search.status_code, 200)
         self.assertIn(b"TCS", search.data)
+        self.assertIn(b'value="TCS"', search.data)
 
         found = self.client.get("/stocks/TCS")
         self.assertEqual(found.status_code, 200)
@@ -271,6 +289,7 @@ class DashboardHarness(unittest.TestCase):
         missing = self.client.get("/stocks/INFY")
         self.assertEqual(missing.status_code, 200)
         self.assertIn(b"was not found in any scanner results", missing.data)
+        self.assertIn(b'id="open-pinball-chart"', missing.data)
 
         unknown = self.client.get("/stocks/NOTATICKER")
         self.assertEqual(unknown.status_code, 200)
@@ -280,6 +299,10 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(api.status_code, 200)
         payload = api.get_json()
         self.assertEqual(payload["results"][0]["symbol"], "RELIANCE")
+
+        infy_api = self.client.get("/api/stocks/search?q=INFY")
+        self.assertEqual(infy_api.status_code, 200)
+        self.assertEqual(infy_api.get_json()["results"][0]["symbol"], "INFY")
 
     def test_pinball_chart_api_reads_cache_not_yahoo(self) -> None:
         from yahoo_bar_store import upsert_bars

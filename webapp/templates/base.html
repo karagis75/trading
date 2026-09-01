@@ -5,13 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Trading Scans{% endblock %}</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=pinball3">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=stockfilter2">
   {% block head %}{% endblock %}
 </head>
 <body>
   <header class="site-header">
     <div class="wrap header-row">
       <a class="brand" href="{{ url_for('main.index') }}">Trading Scans</a>
+      <form class="header-search search-form" action="{{ url_for('stocks.stock_search') }}" method="get" role="search">
+        <label class="sr-only" for="stock-q">Search stocks</label>
+        <input id="stock-q" name="q" type="search" placeholder="Search stocks…" autocomplete="off">
+        <ul id="stock-suggestions" class="suggestions" hidden></ul>
+      </form>
       <nav class="nav">
         <a href="{{ url_for('main.index') }}">Home</a>
         <a href="{{ url_for('scanners.scanner_index') }}">Scanner View</a>
@@ -26,5 +31,6 @@
     <span>Membership history from scanner_history</span>
   </footer>
   {% block scripts %}{% endblock %}
+  <script src="{{ url_for('static', filename='search.js') }}?v=stockfilter1"></script>
 </body>
 </html>

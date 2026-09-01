@@ -3,42 +3,51 @@
 {% block content %}
 <section class="page-head">
   <p class="eyebrow">Stock View</p>
-  <h1>Search stocks</h1>
+  <h1>Stocks</h1>
   <p class="lede">
-    Search any ticker that has appeared in at least one scanner, then open
-    <strong>Open pinball chart</strong> on that stock page.
+    Filter the universe, then open a ticker for scanner history and the pinball chart.
     {% if latest_date %}Latest scan date: <strong>{{ latest_date }}</strong>.{% endif %}
   </p>
 </section>
 
-<form class="search-form" action="{{ url_for('stocks.stock_search') }}" method="get" role="search">
-  <label class="sr-only" for="stock-q">Ticker or company</label>
-  <input id="stock-q" name="q" type="search" value="{{ query }}" placeholder="e.g. RELIANCE or Infosys" autocomplete="off" autofocus>
-  <button type="submit">Search</button>
-  <ul id="stock-suggestions" class="suggestions" hidden></ul>
-</form>
+<div class="filter-bar">
+  <label class="filter-label" for="stock-filter-input">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6.5" cy="6.5" r="5"/><line x1="10.5" y1="10.5" x2="14" y2="14"/></svg>
+    Filter stocks
+  </label>
+  <div class="filter-input-wrap">
+    <input id="stock-filter-input"
+           type="search"
+           placeholder="Type a ticker, company, or industry…"
+           value="{{ query }}"
+           autocomplete="off"
+           autofocus
+           aria-label="Filter stocks by ticker, company, or industry">
+    <button type="button" class="filter-clear" id="stock-filter-clear" hidden aria-label="Clear filter">×</button>
+  </div>
+  <span id="filter-count" class="filter-count muted" aria-live="polite"></span>
+</div>
 
-{% if query %}
-  <section class="panel">
-    <div class="panel-head"><h2>Results for “{{ query }}”</h2></div>
-    {% if results %}
-      <ul class="result-list">
-        {% for row in results %}
-          <li>
-            <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">
-              <strong>{{ row.symbol }}</strong>
-              <span>{{ row.company_name or '' }}</span>
-              {% if row.industry %}<span class="muted">{{ row.industry }}</span>{% endif %}
-            </a>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p class="error-msg">{{ query|upper }} was not found in any scanner results.</p>
-    {% endif %}
-  </section>
-{% endif %}
+<section class="panel">
+  <div class="panel-head"><h2>{% if query %}Matches for “{{ query }}”{% else %}All stocks{% endif %}</h2></div>
+  {% if stocks %}
+    <ul id="stock-list" class="result-list">
+      {% for row in stocks %}
+        <li data-stock-row data-symbol="{{ row.symbol }}" data-company-name="{{ row.company_name or '' }}" data-industry="{{ row.industry or '' }}">
+          <a href="{{ url_for('stocks.stock_detail', symbol=row.symbol) }}">
+            <strong>{{ row.symbol }}</strong>
+            <span>{{ row.company_name or '' }}</span>
+            {% if row.industry %}<span class="muted">{{ row.industry }}</span>{% endif %}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+    <p id="filter-no-match" class="empty filter-no-match" hidden>No stocks match “<span id="filter-term"></span>”.</p>
+  {% else %}
+    <p class="empty">No stocks in the universe yet. Run the daily job so the Nifty 500 list is loaded.</p>
+  {% endif %}
+</section>
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='search.js') }}"></script>
+<script src="{{ url_for('static', filename='stock_filter.js') }}?v=stockfilter1"></script>
 {% endblock %}
