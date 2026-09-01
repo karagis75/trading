@@ -525,7 +525,7 @@ body.modal-open { overflow: hidden; }
 }
 .modal-close:hover { color: var(--text); }
 .pinball-canvas-wrap { width: 100%; overflow: hidden; }
-#pinball-canvas { display: block; width: 100%; height: 480px; }
+#pinball-canvas { display: block; width: 100%; height: 500px; }
 
 @media (max-width: 720px) {
   .choice-grid { grid-template-columns: 1fr; }

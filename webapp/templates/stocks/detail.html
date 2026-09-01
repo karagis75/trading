@@ -19,7 +19,7 @@
     <div class="modal-head">
       <div>
         <h2 id="pinball-modal-title">{{ symbol }} pinball chart</h2>
-        <p id="pinball-modal-meta" class="muted">Loading cached Yahoo bars…</p>
+        <p id="pinball-modal-meta" class="muted">Bullish above weekly EMA20, bearish below. EMA9 / EMA18 are stop levels.</p>
       </div>
       <button type="button" class="modal-close" data-close-pinball aria-label="Close pinball chart">×</button>
     </div>
@@ -115,5 +115,5 @@
 {% endif %}
 {% endblock %}
 {% block scripts %}
-<script src="{{ url_for('static', filename='pinball_chart.js') }}?v=pinball2"></script>
+<script src="{{ url_for('static', filename='pinball_chart.js') }}?v=pinball3"></script>
 {% endblock %}
