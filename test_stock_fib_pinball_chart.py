@@ -52,6 +52,7 @@ class StockFibPinballChartTests(unittest.TestCase):
         self.assertEqual(payload["bars"], [])
         self.assertIsNone(payload["wave"])
         self.assertIn("No cached Yahoo bars", payload["error"])
+        self.assertTrue(payload["database"])
 
     def test_cli_requires_one_ticker_and_prints_json(self) -> None:
         self._seed("TCS", bullish_wave3_rows())

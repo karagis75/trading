@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from ..helpers import get_db, normalize_ticker, queries
+from ..helpers import get_config, get_db, normalize_ticker, queries
 
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -14,9 +14,12 @@ def api_stock_pinball_chart(symbol: str):
     from stock_fib_pinball_chart import build_pinball_chart
 
     ticker = normalize_ticker(symbol)
-    payload = build_pinball_chart(ticker, connection=get_db())
-    status = 200 if payload.get("bars") else 404
-    return jsonify(payload), status
+    payload = build_pinball_chart(
+        ticker,
+        connection=get_db(),
+        database_url=get_config().database_url,
+    )
+    return jsonify(payload)
 
 
 @api_bp.route("/stocks/search")

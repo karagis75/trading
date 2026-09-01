@@ -467,16 +467,28 @@ main.wrap { padding: 2rem 0 3rem; }
   border: 0;
 }
 
-.chart-link { font-weight: 600; white-space: nowrap; }
+.chart-actions { margin: 0.85rem 0 0; }
+.chart-button {
+  border: 0;
+  border-radius: 10px;
+  padding: 0.55rem 0.95rem;
+  background: var(--accent);
+  color: #06221c;
+  font-weight: 700;
+  cursor: pointer;
+}
+.chart-button:hover { filter: brightness(1.05); }
 body.modal-open { overflow: hidden; }
-.modal[hidden] { display: none; }
 .modal {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 40;
-  display: grid;
   place-items: center;
   padding: 1.25rem;
+}
+.modal.is-open {
+  display: grid;
 }
 .modal-backdrop {
   position: absolute;

@@ -264,7 +264,7 @@ class DashboardHarness(unittest.TestCase):
         self.assertEqual(found.status_code, 200)
         self.assertIn(b"Summary across scanners", found.data)
         self.assertIn(b"Membership history", found.data)
-        self.assertIn(b"Pinball chart", found.data)
+        self.assertIn(b"Open pinball chart", found.data)
         self.assertIn(b'id="open-pinball-chart"', found.data)
         self.assertIn(b"pinball_chart.js", found.data)
 
@@ -287,8 +287,9 @@ class DashboardHarness(unittest.TestCase):
 
         upsert_bars(self.tracker.connection, "TCS", rows_to_history(bullish_wave3_rows()))
         empty = self.client.get("/api/stocks/INFY/pinball-chart")
-        self.assertEqual(empty.status_code, 404)
+        self.assertEqual(empty.status_code, 200)
         self.assertIn("No cached Yahoo bars", empty.get_json()["error"])
+        self.assertIn("database", empty.get_json())
 
         with mock.patch("fib_pinball_common.yf.Ticker") as ticker:
             with mock.patch("fib_pinball_common.fetch_history") as fetch:
