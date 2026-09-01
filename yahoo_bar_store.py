@@ -470,6 +470,27 @@ def upsert_bars(
     return len(payload)
 
 
+def symbol_bar_span(connection: Any, symbol: str) -> tuple[int, str | None, str | None]:
+    """Return (count, first_bar, last_bar) from yahoo_ohlcv_daily without loading rows."""
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS n, MIN(bar_date) AS first_bar, MAX(bar_date) AS last_bar
+        FROM yahoo_ohlcv_daily
+        WHERE symbol = ?
+        """,
+        (display_symbol(symbol),),
+    ).fetchone()
+    if row is None:
+        return 0, None, None
+    first = _row_get(row, "first_bar")
+    last = _row_get(row, "last_bar")
+    return (
+        _row_count(row),
+        None if first in (None, "") else str(first),
+        None if last in (None, "") else str(last),
+    )
+
+
 def record_prefetch(
     connection: Any,
     symbol: str,
@@ -478,12 +499,19 @@ def record_prefetch(
     fetch_date: date | str,
     status: str,
     error_message: str | None = None,
+    bar_count: int | None = None,
+    first_bar: str | None = None,
+    last_bar: str | None = None,
 ) -> None:
     day = fetch_date if isinstance(fetch_date, str) else fetch_date.isoformat()
     cleaned = display_symbol(symbol)
     first = last = None
     count = 0
-    if frame is not None and not frame.empty:
+    if bar_count is not None:
+        count = int(bar_count)
+        first = first_bar
+        last = last_bar
+    elif frame is not None and not frame.empty:
         count = len(frame)
         first = pd.Timestamp(frame.index.min()).date().isoformat()
         last = pd.Timestamp(frame.index.max()).date().isoformat()
@@ -664,9 +692,16 @@ def prefetch_symbols(
                     stats["empty"] += 1
                 else:
                     stats["bars"] += upsert_bars(conn, symbol, frame)
-                    stored = load_cached_history(conn, symbol, ignore_cutoff=True)
+                    count, first, last = symbol_bar_span(conn, symbol)
                     record_prefetch(
-                        conn, symbol, stored, fetch_date=day, status="success"
+                        conn,
+                        symbol,
+                        pd.DataFrame(),
+                        fetch_date=day,
+                        status="success",
+                        bar_count=count,
+                        first_bar=first,
+                        last_bar=last,
                     )
                     stats["success"] += 1
             except Exception as exc:

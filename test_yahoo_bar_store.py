@@ -179,13 +179,15 @@ class YahooBarStoreTests(unittest.TestCase):
             requested.append(period)
             return sample_bars(3, end="2026-08-31")
 
-        stats = store.prefetch_symbols(
-            ["TCS", "NEWCO"],
-            period="2y",
-            fetch_date=date(2026, 8, 31),
-            connection=self.conn,
-            live_loader=incremental_loader,
-        )
+        with patch.object(store, "load_cached_history") as reload_all:
+            stats = store.prefetch_symbols(
+                ["TCS", "NEWCO"],
+                period="2y",
+                fetch_date=date(2026, 8, 31),
+                connection=self.conn,
+                live_loader=incremental_loader,
+            )
+        reload_all.assert_not_called()
         self.assertEqual(requested, ["8d", "2y"])
         self.assertEqual(stats["incremental"], 1)
         self.assertEqual(stats["full"], 1)

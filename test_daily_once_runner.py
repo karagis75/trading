@@ -488,6 +488,8 @@ class JobsConfigAndCliTests(unittest.TestCase):
         )
         nimblr = next(job for job in jobs if job.name == "nimblr-minervini-cpr")
         self.assertFalse(nimblr.enabled)
+        prefetch = next(job for job in jobs if job.name == "prefetch-yahoo-ohlcv")
+        self.assertEqual(prefetch.timeout_seconds, 1200)
         cache_replay = {
             "bullish-bias-nifty500",
             "bearish-bias-nifty500",
