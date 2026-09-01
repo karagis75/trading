@@ -640,7 +640,7 @@ def prefetch_symbols(
         "full": 0,
     }
     try:
-        for symbol in tickers:
+        for index, symbol in enumerate(tickers, 1):
             try:
                 last_bar = latest_cached_bar(conn, symbol)
                 request_period = refresh_lookback_period(
@@ -650,6 +650,12 @@ def prefetch_symbols(
                     stats["full"] += 1
                 else:
                     stats["incremental"] += 1
+                if index == 1 or index % 25 == 0 or index == len(tickers):
+                    print(
+                        f"Prefetch progress {index}/{len(tickers)} {display_symbol(symbol)} "
+                        f"period={request_period} last_bar={last_bar}",
+                        flush=True,
+                    )
                 frame = loader(symbol, request_period)
                 if frame is None or frame.empty:
                     record_prefetch(

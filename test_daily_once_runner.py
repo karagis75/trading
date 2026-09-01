@@ -1,5 +1,6 @@
 import io
 import json
+import logging
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -333,6 +334,34 @@ class DailyOnceRunnerTests(unittest.TestCase):
         (self.root / "ok.py").write_text("print('ok')\n", encoding="utf-8")
         report = daily.run()
         self.assertEqual(report.status, runner.STATUS_SUCCESS)
+
+    def test_job_stdout_is_copied_into_the_daily_log(self) -> None:
+        jobs = [runner.JobSpec("ok", "ok.py")]
+        daily = runner.DailyOnceRunner(
+            repo_root=self.root,
+            jobs=jobs,
+            state_path=self.state_path,
+            lock_path=self.lock_path,
+            today_fn=lambda: self.today,
+            now_fn=self._clock,
+            lock_factory=lambda path: FakeLock(path),
+        )
+        (self.root / "ok.py").write_text(
+            "print('Prefetch progress 1/1 TCS period=8d last_bar=2026-08-28')\n",
+            encoding="utf-8",
+        )
+        buffer = io.StringIO()
+        handler = logging.StreamHandler(buffer)
+        log = logging.getLogger("daily_once_runner")
+        log.addHandler(handler)
+        log.setLevel(logging.INFO)
+        try:
+            report = daily.run()
+        finally:
+            log.removeHandler(handler)
+            handler.close()
+        self.assertEqual(report.status, runner.STATUS_SUCCESS)
+        self.assertIn("ok: Prefetch progress 1/1 TCS period=8d last_bar=2026-08-28", buffer.getvalue())
 
     def test_date_output_directory_is_created_before_job_runs(self) -> None:
         output_path = "outputs/{date}/scan.txt"

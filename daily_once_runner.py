@@ -538,13 +538,7 @@ class DailyOnceRunner:
         LOGGER.info("Starting job %s: %s", job.name, " ".join(command))
         started = self.now_fn()
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self.repo_root,
-                check=False,
-                timeout=job.timeout_seconds,
-            )
-            returncode = completed.returncode
+            returncode = self._run_logged_command(command, job.name, job.timeout_seconds)
             message = f"exit {returncode}"
         except subprocess.TimeoutExpired:
             returncode = 1
@@ -561,6 +555,43 @@ class DailyOnceRunner:
             duration_seconds=duration,
             message=message,
         )
+
+    def _run_logged_command(
+        self,
+        command: Sequence[str],
+        job_name: str,
+        timeout_seconds: float | None,
+    ) -> int:
+        """Run a job and copy its stdout/stderr into the daily scheduler log.
+
+        Scheduled tasks have no console, so prefetch ``print`` lines were
+        previously invisible until the process exited.
+        """
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        process = subprocess.Popen(
+            list(command),
+            cwd=self.repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+        )
+        assert process.stdout is not None
+        try:
+            for line in process.stdout:
+                text = line.rstrip()
+                if text:
+                    LOGGER.info("%s: %s", job_name, text)
+            return process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            raise
+        except Exception:
+            process.kill()
+            process.wait()
+            raise
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
