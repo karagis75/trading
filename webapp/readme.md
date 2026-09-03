@@ -12,6 +12,8 @@ python -m webapp
 
 Open `http://127.0.0.1:8000/`.
 
+For Postgres + dashboard in containers (bind `0.0.0.0:8000`, no Windows Task Scheduler), see [DOCKER.md](../DOCKER.md).
+
 On Windows (production path example):
 
 ```powershell

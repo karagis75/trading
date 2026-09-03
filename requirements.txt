@@ -1,2 +1,8 @@
 psycopg[binary]
 flask
+pandas
+numpy
+yfinance
+openpyxl
+requests
+curl_cffi
