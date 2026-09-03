@@ -13,8 +13,9 @@ import daily_once_runner as runner
 from webapp.config import AppConfig
 
 REPO_ROOT = Path(__file__).resolve().parent
-COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
-DOCKERFILE_PATH = REPO_ROOT / "Dockerfile"
+LINUX_DIR = REPO_ROOT / "linux"
+COMPOSE_PATH = LINUX_DIR / "docker-compose.yml"
+DOCKERFILE_PATH = LINUX_DIR / "Dockerfile"
 REQUIREMENTS_PATH = REPO_ROOT / "requirements.txt"
 
 
@@ -66,7 +67,9 @@ class ComposeConfigTests(unittest.TestCase):
         self.assertRegex(self.text, r"(?m)^  daily:\s*$")
         self.assertIn('profiles: ["daily"]', self.text)
         self.assertIn("daily_once_runner.py", self.text)
-        self.assertIn("./scheduler/state:/app/scheduler/state", self.text)
+        self.assertIn("../scheduler/state:/app/scheduler/state", self.text)
+        self.assertIn("context: ..", self.text)
+        self.assertIn("dockerfile: linux/Dockerfile", self.text)
 
     def test_web_publishes_8000_on_all_interfaces(self) -> None:
         self.assertIn('TRADING_WEB_HOST: "0.0.0.0"', self.text)
@@ -97,6 +100,21 @@ class WebBindTests(unittest.TestCase):
             cfg = AppConfig.from_env()
         self.assertEqual(cfg.host, "0.0.0.0")
         self.assertEqual(cfg.port, 8000)
+
+
+class WindowsHomeLayoutTests(unittest.TestCase):
+    def test_docker_files_live_under_linux_not_repo_root(self) -> None:
+        self.assertFalse((REPO_ROOT / "Dockerfile").exists())
+        self.assertFalse((REPO_ROOT / "docker-compose.yml").exists())
+        self.assertFalse((REPO_ROOT / "DOCKER.md").exists())
+        self.assertTrue((LINUX_DIR / "Dockerfile").is_file())
+        self.assertTrue((LINUX_DIR / "docker-compose.yml").is_file())
+
+    def test_windows_task_script_still_defaults_to_eight_am(self) -> None:
+        register = (REPO_ROOT / "scheduler" / "Register-TradingDailyTask.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("[string]$DailyAt = '08:00'", register)
 
 
 class DailyRunnerCliTests(unittest.TestCase):

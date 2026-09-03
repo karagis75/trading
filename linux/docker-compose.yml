@@ -1,0 +1,85 @@
+# Linux VPS only. Windows home keeps scheduler/*.ps1 (08:00) and python -m webapp.
+#
+# From repo root:
+#   cd linux && cp .env.example .env && docker compose up -d --build
+#
+# Weekday 09:00 IST (NSE pre-open):
+#   docker compose run --rm daily
+#
+# Secrets: linux/.env — never bake into the image.
+
+name: trading
+
+x-trading-env: &trading-env
+  TZ: Asia/Kolkata
+  TRADING_DATABASE_URL: postgresql://${POSTGRES_USER:-trading_app}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trading_history}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trading_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trading_history}
+      TZ: Asia/Kolkata
+      PGTZ: Asia/Kolkata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading_app} -d ${POSTGRES_DB:-trading_history}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: linux/Dockerfile
+    environment:
+      <<: *trading-env
+      TRADING_WEB_HOST: "0.0.0.0"
+      TRADING_WEB_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../outputs:/app/outputs
+      - ../scheduler/state:/app/scheduler/state
+      - ../scheduler/logs:/app/scheduler/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+
+  daily:
+    build:
+      context: ..
+      dockerfile: linux/Dockerfile
+    profiles: ["daily"]
+    environment:
+      <<: *trading-env
+    volumes:
+      - ../outputs:/app/outputs
+      - ../scheduler/state:/app/scheduler/state
+      - ../scheduler/logs:/app/scheduler/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app
+    entrypoint: ["python"]
+    command: ["daily_once_runner.py"]
+
+volumes:
+  postgres_data:

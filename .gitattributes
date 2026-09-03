@@ -1,0 +1,5 @@
+*.sh text eol=lf
+linux/*.service text eol=lf
+linux/*.timer text eol=lf
+linux/docker-compose.yml text eol=lf
+linux/Dockerfile text eol=lf

@@ -1,0 +1,14 @@
+[Unit]
+Description=Run trading scanners weekdays at 09:00 Asia/Kolkata (NSE pre-open)
+Documentation=https://github.com/karagis75/trading
+
+[Timer]
+# Host clock must be Asia/Kolkata (see linux/README.md).
+# NSE pre-open is 09:00; continuous trading starts 09:15. Weekends are skipped.
+OnCalendar=Mon-Fri 09:00:00
+Persistent=true
+AccuracySec=1min
+Unit=trading-daily.service
+
+[Install]
+WantedBy=timers.target
