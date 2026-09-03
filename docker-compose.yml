@@ -6,8 +6,8 @@
 # One daily pass (once-per-calendar-day gate is still daily_once_runner.py):
 #   docker compose run --rm daily
 #
-# Host cron example (08:00 Asia/Kolkata):
-#   0 8 * * * cd /path/to/trading && docker compose run --rm daily
+# Host cron example (weekdays 09:00 Asia/Kolkata, NSE pre-open):
+#   0 9 * * 1-5 cd /path/to/trading && docker compose run --rm daily
 #
 # Copy .env.example to .env and change POSTGRES_PASSWORD before any real use.
 # Secrets stay in env vars; they are not baked into the image.

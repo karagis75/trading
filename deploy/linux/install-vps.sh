@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install systemd units so a Linux VPS boots the Compose dashboard and
-# fires daily_once_runner.py at 08:00 local (Asia/Kolkata).
+# fires daily_once_runner.py weekdays at 09:00 Asia/Kolkata (NSE pre-open).
 set -euo pipefail
 
 usage() {
@@ -104,5 +104,5 @@ if [[ "${ENABLE}" -eq 1 ]]; then
   systemctl enable --now trading-daily.timer
   echo "Enabled trading-web.service and trading-daily.timer."
   echo "Dashboard: docker compose binds 0.0.0.0:8000. Open http://<vps-ip>:8000/"
-  echo "The 08:00 timer does not fire a scan until the next calendar slot (Persistent=true catches missed boots)."
+  echo "The weekday 09:00 IST timer does not fire a scan until the next calendar slot (Persistent=true catches missed boots)."
 fi

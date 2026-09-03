@@ -45,9 +45,9 @@ Enabled jobs are still those in `scheduler/jobs.json` (`nimblr-minervini-cpr` an
 Compose does not install a container cron daemon. Keep the schedule on the host (or any orchestrator) and let the Python runner enforce once-per-day:
 
 ```cron
-# 08:00 Asia/Kolkata — same clock the Windows task used
+# Weekdays 09:00 Asia/Kolkata — NSE pre-open (continuous trading starts 09:15)
 CRON_TZ=Asia/Kolkata
-0 8 * * * cd /path/to/trading && docker compose run --rm daily
+0 9 * * 1-5 cd /path/to/trading && docker compose run --rm daily
 ```
 
 On Windows, Task Scheduler can call `docker compose run --rm daily` instead of `Run-TradingDaily.ps1`.

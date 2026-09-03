@@ -21,7 +21,8 @@ class LinuxVpsUnitTests(unittest.TestCase):
         self.assertIn("docker compose up -d", web)
         self.assertIn("docker compose run --rm daily", daily)
         self.assertIn("TimeoutStartSec=21600", daily)
-        self.assertIn("OnCalendar=*-*-* 08:00:00", timer)
+        self.assertIn("OnCalendar=Mon-Fri 09:00:00", timer)
+        self.assertNotIn("08:00", timer)
         self.assertIn("Persistent=true", timer)
         self.assertIn("Asia/Kolkata", timer)
         self.assertNotIn("PASSWORD=", web + daily + timer)
@@ -70,6 +71,8 @@ class LinuxVpsInstallScriptTests(unittest.TestCase):
                 self.assertIn(f"WorkingDirectory={REPO_ROOT}", web)
                 self.assertNotIn("__TRADING_HOME__", web)
                 self.assertIn("docker compose run --rm daily", daily)
+                timer = (unit_dir / "trading-daily.timer").read_text(encoding="utf-8")
+                self.assertIn("OnCalendar=Mon-Fri 09:00:00", timer)
                 self.assertTrue((unit_dir / "trading-daily.timer").is_file())
             finally:
                 if created_env:
