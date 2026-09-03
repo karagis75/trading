@@ -61,6 +61,7 @@ class ComposeConfigTests(unittest.TestCase):
 
     def test_core_services_and_daily_profile(self) -> None:
         self.assertRegex(self.text, r"(?m)^  postgres:\s*$")
+        self.assertIn("image: postgres:16-alpine", self.text)
         self.assertRegex(self.text, r"(?m)^  web:\s*$")
         self.assertRegex(self.text, r"(?m)^  daily:\s*$")
         self.assertIn('profiles: ["daily"]', self.text)

@@ -15,7 +15,7 @@ docker compose up -d --build
 
 Open `http://localhost:8000/`. Flask binds `0.0.0.0:8000` inside the container (`TRADING_WEB_HOST`). Host runs of `python -m webapp` still default to `127.0.0.1`.
 
-`TRADING_DATABASE_URL` points at the Compose Postgres service (`postgres:5432`). Calendar day is `Asia/Kolkata`.
+`TRADING_DATABASE_URL` points at the Compose Postgres service (`postgres:16-alpine` on `postgres:5432`). Calendar day is `Asia/Kolkata`.
 
 Stop:
 
