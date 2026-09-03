@@ -1,5 +1,5 @@
 [Unit]
-Description=Trading daily scanners (once per calendar day)
+Description=Trading daily scanners on the Linux VPS (once per calendar day)
 Documentation=https://github.com/karagis75/trading
 Requires=docker.service
 After=docker.service network-online.target trading-web.service
@@ -7,7 +7,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=__TRADING_HOME__
+WorkingDirectory=__TRADING_HOME__/linux
 # Match the Windows task ExecutionTimeLimit. The Python runner still
 # enforces once-per-calendar-day via lock + scheduler/state/run-state.json.
 TimeoutStartSec=21600

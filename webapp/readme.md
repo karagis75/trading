@@ -12,7 +12,7 @@ python -m webapp
 
 Open `http://127.0.0.1:8000/`.
 
-For Postgres + dashboard in containers (bind `0.0.0.0:8000`, no Windows Task Scheduler), see [DOCKER.md](../DOCKER.md).
+On Windows at home, keep using Task Scheduler (`scheduler/Register-TradingDailyTask.ps1`) and `python -m webapp`. Optional Linux VPS Docker deploy lives in [`linux/README.md`](../linux/README.md) and does not replace this machine.
 
 On Windows (production path example):
 

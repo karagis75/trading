@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
-LINUX_DIR = REPO_ROOT / "deploy" / "linux"
+LINUX_DIR = REPO_ROOT / "linux"
 
 
 class LinuxVpsUnitTests(unittest.TestCase):
@@ -16,8 +16,8 @@ class LinuxVpsUnitTests(unittest.TestCase):
         web = (LINUX_DIR / "trading-web.service").read_text(encoding="utf-8")
         daily = (LINUX_DIR / "trading-daily.service").read_text(encoding="utf-8")
         timer = (LINUX_DIR / "trading-daily.timer").read_text(encoding="utf-8")
-        self.assertIn("WorkingDirectory=__TRADING_HOME__", web)
-        self.assertIn("WorkingDirectory=__TRADING_HOME__", daily)
+        self.assertIn("WorkingDirectory=__TRADING_HOME__/linux", web)
+        self.assertIn("WorkingDirectory=__TRADING_HOME__/linux", daily)
         self.assertIn("docker compose up -d", web)
         self.assertIn("docker compose run --rm daily", daily)
         self.assertIn("TimeoutStartSec=21600", daily)
@@ -42,7 +42,7 @@ class LinuxVpsInstallScriptTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             unit_dir = Path(temp_dir) / "units"
-            env_path = REPO_ROOT / ".env"
+            env_path = LINUX_DIR / ".env"
             created_env = False
             if not env_path.exists():
                 env_path.write_text(
@@ -68,7 +68,7 @@ class LinuxVpsInstallScriptTests(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 web = (unit_dir / "trading-web.service").read_text(encoding="utf-8")
                 daily = (unit_dir / "trading-daily.service").read_text(encoding="utf-8")
-                self.assertIn(f"WorkingDirectory={REPO_ROOT}", web)
+                self.assertIn(f"WorkingDirectory={REPO_ROOT}/linux", web)
                 self.assertNotIn("__TRADING_HOME__", web)
                 self.assertIn("docker compose run --rm daily", daily)
                 timer = (unit_dir / "trading-daily.timer").read_text(encoding="utf-8")

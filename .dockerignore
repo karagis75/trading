@@ -16,6 +16,7 @@ scanner_history/*.sqlite3-journal
 scanner_history/*.sqlite3-wal
 scanner_history/*.sqlite3-shm
 outputs
-DOCKER.md
+linux/.env
 *.md
 !webapp/**
+!linux/README.md

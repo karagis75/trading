@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Install systemd units so a Linux VPS boots the Compose dashboard and
-# fires daily_once_runner.py weekdays at 09:00 Asia/Kolkata (NSE pre-open).
+# Linux VPS only. Does not change Windows Task Scheduler on the home PC.
+# Installs systemd units so Compose boots the dashboard and fires
+# daily_once_runner.py weekdays at 09:00 Asia/Kolkata (NSE pre-open).
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: install-vps.sh [options]
+Usage: linux/install-vps.sh [options]
 
 Options:
-  --home DIR       Repository root (default: parent of deploy/linux)
+  --home DIR       Repository root (default: parent of linux/)
   --unit-dir DIR   Where to write unit files (default: /etc/systemd/system)
   --no-enable      Write units only; do not systemctl enable/start
   --set-timezone   timedatectl set-timezone Asia/Kolkata (requires root)
@@ -21,7 +22,7 @@ EOF
 }
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-TRADING_HOME=$(cd "${SCRIPT_DIR}/../.." && pwd)
+TRADING_HOME=$(cd "${SCRIPT_DIR}/.." && pwd)
 UNIT_DIR=/etc/systemd/system
 ENABLE=1
 SET_TZ=0
@@ -56,8 +57,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -f "${TRADING_HOME}/docker-compose.yml" ]]; then
-  echo "docker-compose.yml not found in ${TRADING_HOME}" >&2
+COMPOSE_FILE="${TRADING_HOME}/linux/docker-compose.yml"
+ENV_FILE="${TRADING_HOME}/linux/.env"
+ENV_EXAMPLE="${TRADING_HOME}/linux/.env.example"
+
+if [[ ! -f "${COMPOSE_FILE}" ]]; then
+  echo "linux/docker-compose.yml not found under ${TRADING_HOME}" >&2
   exit 1
 fi
 if [[ ! -f "${TRADING_HOME}/daily_once_runner.py" ]]; then
@@ -65,12 +70,12 @@ if [[ ! -f "${TRADING_HOME}/daily_once_runner.py" ]]; then
   exit 1
 fi
 
-if [[ ! -f "${TRADING_HOME}/.env" ]]; then
-  if [[ -f "${TRADING_HOME}/.env.example" ]]; then
-    cp "${TRADING_HOME}/.env.example" "${TRADING_HOME}/.env"
-    echo "Wrote ${TRADING_HOME}/.env from .env.example — change POSTGRES_PASSWORD before real use."
+if [[ ! -f "${ENV_FILE}" ]]; then
+  if [[ -f "${ENV_EXAMPLE}" ]]; then
+    cp "${ENV_EXAMPLE}" "${ENV_FILE}"
+    echo "Wrote ${ENV_FILE} from linux/.env.example — change POSTGRES_PASSWORD before real use."
   else
-    echo "Missing ${TRADING_HOME}/.env (and no .env.example to copy)." >&2
+    echo "Missing ${ENV_FILE} (and no linux/.env.example to copy)." >&2
     exit 1
   fi
 fi
@@ -103,6 +108,6 @@ if [[ "${ENABLE}" -eq 1 ]]; then
   systemctl enable --now trading-web.service
   systemctl enable --now trading-daily.timer
   echo "Enabled trading-web.service and trading-daily.timer."
-  echo "Dashboard: docker compose binds 0.0.0.0:8000. Open http://<vps-ip>:8000/"
-  echo "The weekday 09:00 IST timer does not fire a scan until the next calendar slot (Persistent=true catches missed boots)."
+  echo "Dashboard: http://<vps-ip>:8000/  (Windows home PC is unchanged.)"
+  echo "Weekday 09:00 IST timer; Persistent=true catches missed boots."
 fi
