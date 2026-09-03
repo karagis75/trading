@@ -52,6 +52,8 @@ CRON_TZ=Asia/Kolkata
 
 On Windows, Task Scheduler can call `docker compose run --rm daily` instead of `Run-TradingDaily.ps1`.
 
+On a Linux VPS, use systemd instead of cron: see [deploy/linux/README.md](deploy/linux/README.md).
+
 ## Secrets
 
 Passwords belong in `.env` (see `.env.example`). They are interpolated into `TRADING_DATABASE_URL` at Compose time and are not copied into the image. `.dockerignore` excludes `.env`.

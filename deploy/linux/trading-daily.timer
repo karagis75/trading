@@ -1,0 +1,12 @@
+[Unit]
+Description=Run trading scanners daily at 08:00 Asia/Kolkata
+Documentation=https://github.com/karagis75/trading
+[Timer]
+# Host clock must be Asia/Kolkata (see deploy/linux/README.md).
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+AccuracySec=1min
+Unit=trading-daily.service
+
+[Install]
+WantedBy=timers.target
