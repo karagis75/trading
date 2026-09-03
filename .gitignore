@@ -1,4 +1,5 @@
 # Scheduler runtime files — do not commit per-machine run state.
+.env
 scheduler/state/
 scheduler/logs/
 scanner_history/*.sqlite3
